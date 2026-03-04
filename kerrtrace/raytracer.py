@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import threading
 import time
+from typing import Callable
 
 from PIL import Image
 import torch
@@ -66,6 +67,33 @@ class KerrRayTracer:
         tuple[object, ...],
         tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     ] = {}
+    _compiled_unbound_cache: dict[tuple[object, ...], Callable[..., torch.Tensor]] = {}
+    _compiled_unbound_fail: set[tuple[object, ...]] = set()
+    _compiled_unbound_lock = threading.Lock()
+
+    @classmethod
+    def _get_compiled_unbound(
+        cls,
+        key: tuple[object, ...],
+        fn: Callable[..., torch.Tensor],
+    ) -> Callable[..., torch.Tensor] | None:
+        if not hasattr(torch, "compile"):
+            return None
+        with cls._compiled_unbound_lock:
+            cached = cls._compiled_unbound_cache.get(key)
+            if cached is not None:
+                return cached
+            if key in cls._compiled_unbound_fail:
+                return None
+        try:
+            compiled = torch.compile(fn, mode="reduce-overhead")
+        except Exception:
+            with cls._compiled_unbound_lock:
+                cls._compiled_unbound_fail.add(key)
+            return None
+        with cls._compiled_unbound_lock:
+            cls._compiled_unbound_cache[key] = compiled
+        return compiled
 
     def __init__(self, config: RenderConfig):
         self.config = config.validated()
@@ -110,17 +138,31 @@ class KerrRayTracer:
             device=self.device,
         )
         self._rhs_fn = self._rhs
-        if hasattr(torch, "compile"):
-            if (self.config.compile_rhs or self.use_mps_optimized_kernel) and self.config.coordinate_system == "boyer_lindquist":
-                try:
-                    self._rhs_fn = torch.compile(self._rhs, mode="reduce-overhead")
-                except Exception:
-                    self._rhs_fn = self._rhs
-            if self.config.compile_rhs and self.is_ks_family and (not self.ks_use_analytic_rhs):
-                try:
-                    self._rhs_kerr_schild_fn = torch.compile(self._rhs_kerr_schild_numeric, mode="reduce-overhead")
-                except Exception:
-                    self._rhs_kerr_schild_fn = self._rhs_kerr_schild_numeric
+        if (self.config.compile_rhs or self.use_mps_optimized_kernel) and self.config.coordinate_system == "boyer_lindquist":
+            compiled_unbound = self._get_compiled_unbound(
+                (
+                    "rhs_bl_unbound",
+                    "reduce-overhead",
+                    self.device.type,
+                    str(self.dtype),
+                ),
+                KerrRayTracer._rhs,
+            )
+            if compiled_unbound is not None:
+                self._rhs_fn = lambda state, _fn=compiled_unbound, _self=self: _fn(_self, state)
+        if self.config.compile_rhs and self.is_ks_family and (not self.ks_use_analytic_rhs):
+            compiled_ks_unbound = self._get_compiled_unbound(
+                (
+                    "rhs_ks_numeric_unbound",
+                    "reduce-overhead",
+                    self.device.type,
+                    str(self.dtype),
+                    self.config.metric_model,
+                ),
+                KerrRayTracer._rhs_kerr_schild_numeric,
+            )
+            if compiled_ks_unbound is not None:
+                self._rhs_kerr_schild_fn = lambda state, _fn=compiled_ks_unbound, _self=self: _fn(_self, state)
 
         self._hdri_tex: torch.Tensor | None = None
         if self.config.background_mode == "hdri" and self.config.hdri_path:
@@ -1559,6 +1601,99 @@ class KerrRayTracer:
 
         return y5, accept, h_new, fatal
 
+    def _rk45_adaptive_step_fsal(
+        self,
+        state: torch.Tensor,
+        h: torch.Tensor,
+        k1: torch.Tensor | None = None,
+        k1_valid: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Dormand-Prince 5(4) with optional FSAL k1 reuse for BL tracing."""
+        cfg = self.config
+        h_col = h.unsqueeze(-1)
+
+        if k1 is None:
+            k1_eff = self._rhs_fn(state)
+        else:
+            k1_eff = k1
+            if k1_valid is not None:
+                if k1_valid.dtype != torch.bool:
+                    k1_valid = k1_valid.to(dtype=torch.bool)
+                missing = ~k1_valid
+                if bool(missing.any()):
+                    missing_pos = torch.nonzero(missing, as_tuple=False).squeeze(-1)
+                    k1_eff = k1_eff.clone()
+                    k1_eff[missing_pos] = self._rhs_fn(state[missing_pos])
+
+        k2 = self._rhs_fn(state + h_col * (1.0 / 5.0) * k1_eff)
+        k3 = self._rhs_fn(state + h_col * ((3.0 / 40.0) * k1_eff + (9.0 / 40.0) * k2))
+        k4 = self._rhs_fn(state + h_col * ((44.0 / 45.0) * k1_eff + (-56.0 / 15.0) * k2 + (32.0 / 9.0) * k3))
+        k5 = self._rhs_fn(
+            state
+            + h_col
+            * (
+                (19372.0 / 6561.0) * k1_eff
+                + (-25360.0 / 2187.0) * k2
+                + (64448.0 / 6561.0) * k3
+                + (-212.0 / 729.0) * k4
+            )
+        )
+        k6 = self._rhs_fn(
+            state
+            + h_col
+            * (
+                (9017.0 / 3168.0) * k1_eff
+                + (-355.0 / 33.0) * k2
+                + (46732.0 / 5247.0) * k3
+                + (49.0 / 176.0) * k4
+                + (-5103.0 / 18656.0) * k5
+            )
+        )
+
+        y5 = state + h_col * (
+            (35.0 / 384.0) * k1_eff
+            + (500.0 / 1113.0) * k3
+            + (125.0 / 192.0) * k4
+            + (-2187.0 / 6784.0) * k5
+            + (11.0 / 84.0) * k6
+        )
+        k7 = self._rhs_fn(y5)
+
+        y4 = state + h_col * (
+            (5179.0 / 57600.0) * k1_eff
+            + (7571.0 / 16695.0) * k3
+            + (393.0 / 640.0) * k4
+            + (-92097.0 / 339200.0) * k5
+            + (187.0 / 2100.0) * k6
+            + (1.0 / 40.0) * k7
+        )
+
+        err = y5 - y4
+        scale = cfg.adaptive_atol + cfg.adaptive_rtol * torch.maximum(torch.abs(state), torch.abs(y5))
+        scale = torch.clamp(scale, min=1.0e-12)
+        err_ratio = torch.sqrt(torch.mean(torch.square(err / scale), dim=-1))
+
+        y5[:, 1] = torch.clamp(y5[:, 1], min=1.0e-3)
+        y5 = self._regularize_angular_state(y5)
+
+        finite = torch.isfinite(y5).all(dim=-1) & torch.isfinite(err_ratio)
+        err_ratio = torch.where(finite, err_ratio, torch.full_like(err_ratio, float("inf")))
+
+        h_min = torch.as_tensor(cfg.adaptive_step_min, dtype=self.dtype, device=self.device)
+        h_max = torch.as_tensor(cfg.adaptive_step_max, dtype=self.dtype, device=self.device)
+        at_min = h <= (1.0001 * h_min)
+
+        accept = ((err_ratio <= 1.0) | at_min) & finite
+        fatal = (~finite) & at_min
+
+        err_safe = torch.clamp(err_ratio, min=1.0e-9)
+        fac_accept = torch.clamp(0.9 * torch.pow(err_safe, -0.2), min=0.30, max=2.50)
+        fac_reject = torch.clamp(0.9 * torch.pow(err_safe, -0.25), min=0.10, max=0.50)
+        h_new = torch.where(accept, h * fac_accept, h * fac_reject)
+        h_new = torch.clamp(h_new, min=h_min, max=h_max)
+
+        return y5, accept, h_new, fatal, k7
+
     def _hermite_interp(
         self,
         y0: torch.Tensor,
@@ -2383,6 +2518,17 @@ class KerrRayTracer:
         ray_step = torch.full((n,), float(cfg.step_size), dtype=self.dtype, device=self.device)
         if cfg.adaptive_integrator:
             ray_step = torch.clamp(ray_step, min=cfg.adaptive_step_min, max=cfg.adaptive_step_max)
+        use_bl_fsal = bool(cfg.adaptive_integrator)
+        bl_k1_cache = (
+            torch.zeros((n, state.shape[1]), dtype=self.dtype, device=self.device)
+            if use_bl_fsal
+            else None
+        )
+        bl_k1_valid = (
+            torch.zeros((n,), dtype=torch.bool, device=self.device)
+            if use_bl_fsal
+            else None
+        )
 
         steps_used = 0
         max_attempts = cfg.max_steps * (2 if cfg.adaptive_integrator else 1)
@@ -2398,7 +2544,17 @@ class KerrRayTracer:
             step_used = local_step
 
             if cfg.adaptive_integrator:
-                next_all, accepted_local, next_step, fatal_local = self._rk45_adaptive_step(prev_state, local_step)
+                recovered_local = torch.zeros_like(local_step, dtype=torch.bool)
+                if use_bl_fsal and bl_k1_cache is not None and bl_k1_valid is not None:
+                    next_all, accepted_local, next_step, fatal_local, k7 = self._rk45_adaptive_step_fsal(
+                        prev_state,
+                        local_step,
+                        k1=bl_k1_cache[idx],
+                        k1_valid=bl_k1_valid[idx],
+                    )
+                else:
+                    next_all, accepted_local, next_step, fatal_local = self._rk45_adaptive_step(prev_state, local_step)
+                    k7 = None
                 ray_step[idx] = next_step
 
                 if bool(fatal_local.any()) and cfg.adaptive_fallback_rk4:
@@ -2413,13 +2569,14 @@ class KerrRayTracer:
                         finite_fb = torch.isfinite(fb_next).all(dim=-1)
                         fb_ok = fb_ok & finite_fb
                         fb_state = torch.where(finite_fb.unsqueeze(-1), fb_next, fb_state)
-                    recovered_local = torch.zeros_like(fatal_local)
                     recovered_local[fatal_pos] = fb_ok
                     if bool(recovered_local.any()):
                         next_all = torch.where(recovered_local.unsqueeze(-1), fb_state.new_zeros(next_all.shape), next_all)
                         next_all[fatal_pos[fb_ok]] = fb_state[fb_ok]
                         accepted_local = accepted_local | recovered_local
                         ray_step[idx[recovered_local]] = torch.as_tensor(cfg.adaptive_step_min, dtype=self.dtype, device=self.device)
+                        if use_bl_fsal and bl_k1_valid is not None:
+                            bl_k1_valid[idx[recovered_local]] = False
                     fatal_local = fatal_local & (~recovered_local)
 
                 if bool(fatal_local.any()):
@@ -2427,6 +2584,15 @@ class KerrRayTracer:
                     hit_horizon[fatal_idx] = True
                     escaped[fatal_idx] = False
                     active[fatal_idx] = False
+                    if use_bl_fsal and bl_k1_valid is not None:
+                        bl_k1_valid[fatal_idx] = False
+
+                if use_bl_fsal and bl_k1_cache is not None and bl_k1_valid is not None and k7 is not None:
+                    accepted_non_recovered = accepted_local & (~recovered_local)
+                    if bool(accepted_non_recovered.any()):
+                        accepted_idx = idx[accepted_non_recovered]
+                        bl_k1_cache[accepted_idx] = k7[accepted_non_recovered]
+                        bl_k1_valid[accepted_idx] = True
 
                 if not bool(accepted_local.any()):
                     continue
@@ -3840,6 +4006,41 @@ class KerrRayTracer:
                 out[:, col, :] = (1.0 - alpha) * rgb[:, col, :] + alpha * blend
         return out
 
+    def _adaptive_row_scales_from_preview(
+        self,
+        preview_rgb: torch.Tensor,
+        min_scale: float,
+        quantile: float,
+    ) -> torch.Tensor:
+        lum = (
+            0.2126 * preview_rgb[:, :, 0]
+            + 0.7152 * preview_rgb[:, :, 1]
+            + 0.0722 * preview_rgb[:, :, 2]
+        )
+        dx = torch.abs(lum[:, 1:] - lum[:, :-1])
+        dy = torch.abs(lum[1:, :] - lum[:-1, :])
+        grad = torch.zeros_like(lum)
+        grad[:, :-1] = grad[:, :-1] + dx
+        grad[:-1, :] = grad[:-1, :] + dy
+        row_energy = grad.mean(dim=1)
+        if int(row_energy.numel()) == 0:
+            return torch.ones(0, dtype=self.dtype, device=self.device)
+
+        q = float(torch.quantile(row_energy, float(quantile)).item())
+        if (not math.isfinite(q)) or q <= 1.0e-9:
+            return torch.ones_like(row_energy)
+
+        normalized = torch.clamp(row_energy / q, min=0.0, max=1.0)
+        row_scale = float(min_scale) + (1.0 - float(min_scale)) * normalized
+        row_scale = torch.clamp(row_scale, min=float(min_scale), max=1.0)
+
+        if int(row_scale.numel()) > 1:
+            expanded = row_scale.clone()
+            expanded[1:] = torch.maximum(expanded[1:], row_scale[:-1])
+            expanded[:-1] = torch.maximum(expanded[:-1], row_scale[1:])
+            row_scale = torch.clamp(expanded, min=float(min_scale), max=1.0)
+        return row_scale
+
     def _format_eta(self, seconds: float) -> str:
         secs = max(0, int(round(seconds)))
         hours, rem = divmod(secs, 3600)
@@ -3917,6 +4118,10 @@ class KerrRayTracer:
         tile_rows_cfg = int(self.config.render_tile_rows)
         if tile_rows_cfg > 0:
             tile_rows = min(h, tile_rows_cfg)
+        elif self.config.adaptive_spatial_sampling and h > 1:
+            # Adaptive per-row scheduling needs multiple row blocks even when the
+            # progress bar is disabled.
+            tile_rows = max(1, min(h, math.ceil(h / 8)))
         elif self.config.show_progress_bar and h > 1:
             # Keep chunks coarse to reduce per-tile overhead while preserving progress updates.
             target_chunks = 4 if self.config.meridian_supersample else 6
@@ -3983,11 +4188,112 @@ class KerrRayTracer:
             with amp_ctx:
                 return self._shade(*trace[:-1], emitter=emitter)
 
+        cfg_render_base = self.config
         row_blocks: list[tuple[int, int]]
         if use_tiling:
             row_blocks = [(rs, min(h, rs + tile_rows)) for rs in range(0, h, tile_rows)]
         else:
             row_blocks = [(0, h)]
+
+        def _trace_and_shade_block(
+            row_start: int,
+            row_end: int,
+            use_meridian: bool,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+            rows = row_end - row_start
+            if use_meridian:
+                trace_a = trace_fn(
+                    x_pixel_offset=x_pixel_offset - 0.35,
+                    y_pixel_offset=y_pixel_offset,
+                    emitter=emitter,
+                    row_start=row_start,
+                    row_end=row_end,
+                )
+                trace_b = trace_fn(
+                    x_pixel_offset=x_pixel_offset + 0.35,
+                    y_pixel_offset=y_pixel_offset,
+                    emitter=emitter,
+                    row_start=row_start,
+                    row_end=row_end,
+                )
+                rgb_a = _shade_from_trace(trace_a).reshape(rows, w, 3)
+                rgb_b = _shade_from_trace(trace_b).reshape(rows, w, 3)
+                return (
+                    0.5 * (rgb_a + rgb_b),
+                    trace_a[0],
+                    trace_a[1],
+                    trace_a[2],
+                    trace_a[3],
+                    int(max(trace_a[-1], trace_b[-1])),
+                )
+
+            trace = trace_fn(
+                x_pixel_offset=x_pixel_offset,
+                y_pixel_offset=y_pixel_offset,
+                emitter=emitter,
+                row_start=row_start,
+                row_end=row_end,
+            )
+            return (
+                _shade_from_trace(trace).reshape(rows, w, 3),
+                trace[0],
+                trace[1],
+                trace[2],
+                trace[3],
+                int(trace[-1]),
+            )
+
+        row_step_overrides: list[int] | None = None
+        adaptive_spatial_enabled = bool(
+            cfg_render_base.adaptive_spatial_sampling
+            and len(row_blocks) > 1
+            and h >= 96
+            and w >= 96
+            and int(cfg_render_base.max_steps) > 80
+        )
+        if adaptive_spatial_enabled:
+            preview_steps = max(
+                16,
+                min(int(cfg_render_base.max_steps) - 1, int(cfg_render_base.adaptive_spatial_preview_steps)),
+            )
+            if preview_steps < int(cfg_render_base.max_steps):
+                try:
+                    self.config = replace(cfg_render_base, max_steps=int(preview_steps))
+                    preview_rgb = torch.zeros((h, w, 3), dtype=self.dtype, device=self.device)
+                    for row_start, row_end in row_blocks:
+                        block_rgb, _, _, _, _, _ = _trace_and_shade_block(
+                            row_start=row_start,
+                            row_end=row_end,
+                            use_meridian=False,
+                        )
+                        preview_rgb[row_start:row_end, :, :] = block_rgb
+                    row_scales = self._adaptive_row_scales_from_preview(
+                        preview_rgb=preview_rgb,
+                        min_scale=float(cfg_render_base.adaptive_spatial_min_scale),
+                        quantile=float(cfg_render_base.adaptive_spatial_quantile),
+                    )
+                    row_step_overrides = []
+                    for row_start, row_end in row_blocks:
+                        if row_end <= row_start:
+                            row_step_overrides.append(int(cfg_render_base.max_steps))
+                            continue
+                        block_scale = float(torch.max(row_scales[row_start:row_end]).item())
+                        target_steps = int(round(float(cfg_render_base.max_steps) * block_scale))
+                        target_steps = max(64, min(int(cfg_render_base.max_steps), target_steps))
+                        row_step_overrides.append(target_steps)
+                    if progress_enabled and row_step_overrides:
+                        mean_scale = float(np.mean(row_step_overrides)) / max(1.0, float(cfg_render_base.max_steps))
+                        print(
+                            (
+                                "Adaptive spatial sampling enabled: "
+                                f"preview_steps={preview_steps}, mean_step_scale={mean_scale:.3f}"
+                            ),
+                            flush=True,
+                        )
+                except Exception:
+                    row_step_overrides = None
+                finally:
+                    self.config = cfg_render_base
 
         if use_click_progress:
             fill_char, empty_char = self._progress_bar_chars()
@@ -4005,68 +4311,53 @@ class KerrRayTracer:
         else:
             progress_ctx = nullcontext(None)
 
-        with progress_ctx as progress_bar:
-            for row_start, row_end in row_blocks:
-                if self.config.meridian_supersample:
-                    trace_a = trace_fn(
-                        x_pixel_offset=x_pixel_offset - 0.35,
-                        y_pixel_offset=y_pixel_offset,
-                        emitter=emitter,
-                        row_start=row_start,
-                        row_end=row_end,
-                    )
-                    trace_b = trace_fn(
-                        x_pixel_offset=x_pixel_offset + 0.35,
-                        y_pixel_offset=y_pixel_offset,
-                        emitter=emitter,
-                        row_start=row_start,
-                        row_end=row_end,
-                    )
-                    rows = row_end - row_start
-                    rgb_a = _shade_from_trace(trace_a).reshape(rows, w, 3)
-                    rgb_b = _shade_from_trace(trace_b).reshape(rows, w, 3)
-                    rgb[row_start:row_end, :, :] = 0.5 * (rgb_a + rgb_b)
+        try:
+            with progress_ctx as progress_bar:
+                for block_index, (row_start, row_end) in enumerate(row_blocks):
+                    if row_step_overrides is not None:
+                        target_steps = int(row_step_overrides[block_index])
+                        if int(self.config.max_steps) != target_steps:
+                            self.config = replace(cfg_render_base, max_steps=target_steps)
+                    elif self.config is not cfg_render_base:
+                        self.config = cfg_render_base
 
-                    local_hit_disk = trace_a[0]
-                    local_hit_emitter = trace_a[1]
-                    local_hit_horizon = trace_a[2]
-                    local_escaped = trace_a[3]
-                    steps_used = max(steps_used, trace_a[-1], trace_b[-1])
-                else:
-                    trace = trace_fn(
-                        x_pixel_offset=x_pixel_offset,
-                        y_pixel_offset=y_pixel_offset,
-                        emitter=emitter,
+                    (
+                        block_rgb,
+                        local_hit_disk,
+                        local_hit_emitter,
+                        local_hit_horizon,
+                        local_escaped,
+                        local_steps_used,
+                    ) = _trace_and_shade_block(
                         row_start=row_start,
                         row_end=row_end,
+                        use_meridian=bool(cfg_render_base.meridian_supersample),
                     )
-                    rows = row_end - row_start
-                    rgb[row_start:row_end, :, :] = _shade_from_trace(trace).reshape(rows, w, 3)
-                    local_hit_disk = trace[0]
-                    local_hit_emitter = trace[1]
-                    local_hit_horizon = trace[2]
-                    local_escaped = trace[3]
-                    steps_used = max(steps_used, trace[-1])
 
-                start = row_start * w
-                end = row_end * w
-                hit_disk[start:end] = local_hit_disk
-                hit_emitter[start:end] = local_hit_emitter
-                hit_horizon[start:end] = local_hit_horizon
-                escaped[start:end] = local_escaped
-                rows_done += (row_end - row_start)
-                if progress_bar is not None:
-                    progress_bar.update(row_end - row_start)
-                elif progress_enabled:
-                    now_ts = time.perf_counter()
-                    with progress_state_lock:
-                        eta_base_seconds, eta_base_time = _recompute_eta(now_ts, rows_done)
-                        eta_now = eta_base_seconds
-                    _emit_progress(
-                        rows_now=rows_done,
-                        eta_now=eta_now,
-                        finalize_now=rows_done >= h,
-                    )
+                    rgb[row_start:row_end, :, :] = block_rgb
+                    steps_used = max(steps_used, int(local_steps_used))
+
+                    start = row_start * w
+                    end = row_end * w
+                    hit_disk[start:end] = local_hit_disk
+                    hit_emitter[start:end] = local_hit_emitter
+                    hit_horizon[start:end] = local_hit_horizon
+                    escaped[start:end] = local_escaped
+                    rows_done += (row_end - row_start)
+                    if progress_bar is not None:
+                        progress_bar.update(row_end - row_start)
+                    elif progress_enabled:
+                        now_ts = time.perf_counter()
+                        with progress_state_lock:
+                            eta_base_seconds, eta_base_time = _recompute_eta(now_ts, rows_done)
+                            eta_now = eta_base_seconds
+                        _emit_progress(
+                            rows_now=rows_done,
+                            eta_now=eta_now,
+                            finalize_now=rows_done >= h,
+                        )
+        finally:
+            self.config = cfg_render_base
 
         if ticker_thread is not None:
             progress_stop.set()

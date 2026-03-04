@@ -107,6 +107,10 @@ class RenderConfig:
     video_crf: int = 18
     render_tile_rows: int = 0
     camera_fastpath: bool = True
+    adaptive_spatial_sampling: bool = False
+    adaptive_spatial_preview_steps: int = 96
+    adaptive_spatial_min_scale: float = 0.65
+    adaptive_spatial_quantile: float = 0.78
     show_progress_bar: bool = True
     animation_workers: int = 1
     quality_lock: bool = False
@@ -301,6 +305,12 @@ class RenderConfig:
             raise ValueError("kerr_schild_null_norm_tol must be positive")
         if cfg.render_tile_rows < 0:
             raise ValueError("render_tile_rows must be >= 0")
+        if cfg.adaptive_spatial_preview_steps < 16 or cfg.adaptive_spatial_preview_steps > 10000:
+            raise ValueError("adaptive_spatial_preview_steps must be in [16, 10000]")
+        if cfg.adaptive_spatial_min_scale <= 0.0 or cfg.adaptive_spatial_min_scale > 1.0:
+            raise ValueError("adaptive_spatial_min_scale must be in (0, 1]")
+        if cfg.adaptive_spatial_quantile < 0.50 or cfg.adaptive_spatial_quantile > 0.995:
+            raise ValueError("adaptive_spatial_quantile must be in [0.50, 0.995]")
         if cfg.animation_workers < 1 or cfg.animation_workers > 64:
             raise ValueError("animation_workers must be in [1, 64]")
         if cfg.quality_lock_psnr_min <= 0.0:

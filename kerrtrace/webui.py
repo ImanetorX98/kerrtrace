@@ -5,7 +5,6 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
-import pty
 import re
 import select
 import subprocess
@@ -13,6 +12,11 @@ import sys
 from typing import Any
 
 import streamlit as st
+
+if os.name == "posix":
+    import pty
+else:
+    pty = None
 
 try:
     from .config import RenderConfig
@@ -54,6 +58,11 @@ CHOICE_FIELDS: dict[str, list[str]] = {
     "postprocess_pipeline": ["off", "gargantua"],
 }
 
+AUTHOR_SIGNATURE = "Iman Rosignoli"
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".gif"}
+MEDIA_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
+
 
 def _default_python() -> str:
     project_python = Path(".venv/bin/python")
@@ -66,6 +75,10 @@ def _safe_choice(options: list[str], value: str) -> str:
     if value in options:
         return value
     return options[0]
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
 
 
 def _run_command_live(cmd: list[str], cwd: Path, log_placeholder: Any) -> tuple[int, str]:
@@ -168,13 +181,13 @@ def _parse_patch(patch_text: str) -> dict[str, Any]:
 def _show_output_media(out_file: Path) -> None:
     suffix = out_file.suffix.lower()
     st.subheader("Risultato")
-    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+    if suffix in IMAGE_SUFFIXES:
         try:
             st.image(out_file.read_bytes(), caption=str(out_file))
         except Exception:
             st.image(str(out_file), caption=str(out_file))
         return
-    if suffix in {".mp4", ".mov", ".mkv", ".gif"}:
+    if suffix in VIDEO_SUFFIXES:
         mime = "video/mp4"
         if suffix == ".gif":
             mime = "image/gif"
@@ -244,9 +257,56 @@ def _tail_text_file(path: Path, max_chars: int = 120_000) -> str:
             return ""
 
 
+def _latest_media_in_out(workspace_path: Path, suffix: str | None = None) -> Path | None:
+    out_dir = (workspace_path / "out").resolve()
+    if not out_dir.exists():
+        return None
+    if suffix is not None and suffix.lower() not in MEDIA_SUFFIXES:
+        suffix = None
+    try:
+        if suffix is not None:
+            candidates = sorted(
+                out_dir.glob(f"**/*{suffix.lower()}"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                return candidates[0].resolve()
+        media_candidates = sorted(
+            (p for p in out_dir.glob("**/*") if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if media_candidates:
+            return media_candidates[0].resolve()
+    except Exception:
+        return None
+    return None
+
+
+def _resolve_output_file(
+    log_text: str,
+    workspace_path: Path,
+    out_hint: Path,
+) -> Path | None:
+    out_from_log = _extract_output_path_from_log(log_text, workspace_path)
+    candidates: list[Path] = []
+    if out_from_log is not None:
+        candidates.append(out_from_log)
+    if out_hint:
+        out_hint_abs = out_hint if out_hint.is_absolute() else (workspace_path / out_hint)
+        candidates.append(out_hint_abs.resolve())
+    for cand in candidates:
+        if cand.exists():
+            return cand.resolve()
+    preferred_suffix = out_hint.suffix.lower() if out_hint.suffix else None
+    return _latest_media_in_out(workspace_path=workspace_path, suffix=preferred_suffix)
+
+
 def main() -> None:
     st.set_page_config(page_title="KerrTrace WebUI", layout="wide")
     st.title("KerrTrace WebUI")
+    st.markdown(f"**Autore:** `{AUTHOR_SIGNATURE}`")
     st.caption(
         "Questa interfaccia genera un JSON RenderConfig e lancia "
         "`python -m kerrtrace --config ...`."
@@ -261,7 +321,7 @@ def main() -> None:
     if last_output_raw:
         last_output = Path(last_output_raw)
         if last_output.exists():
-            with st.expander("Anteprima ultimo output", expanded=False):
+            with st.expander("Anteprima ultimo output", expanded=True):
                 _show_output_media(last_output)
 
     async_proc = st.session_state.get("async_proc")
@@ -307,24 +367,28 @@ def main() -> None:
                     st.rerun()
 
             if not running:
-                out_from_log = _extract_output_path_from_log(tail_txt, workspace_async)
-                out_file = out_from_log if out_from_log is not None else out_hint
-                if not out_file.is_absolute():
-                    out_file = workspace_async / out_file
-                out_file = out_file.resolve()
-                if out_file.exists():
+                out_file = _resolve_output_file(
+                    log_text=tail_txt,
+                    workspace_path=workspace_async,
+                    out_hint=out_hint,
+                )
+                if out_file is not None and out_file.exists():
                     st.session_state["last_output_path"] = str(out_file)
                     _show_output_media(out_file)
+                else:
+                    st.warning("Output non trovato automaticamente. Controlla il path nel log.")
                 if st.button("Pulisci stato job"):
                     st.session_state["async_proc"] = None
                     st.session_state["async_meta"] = {}
                     st.rerun()
 
     default_cfg = asdict(RenderConfig())
+    supports_adaptive_spatial = "adaptive_spatial_sampling" in default_cfg
     loaded_cfg: dict[str, Any] = {}
 
     with st.sidebar:
         st.header("Run")
+        st.caption(f"Autore: {AUTHOR_SIGNATURE}")
         python_exec = st.text_input("Python executable", value=_default_python())
         workspace = st.text_input("Workspace", value=str(Path.cwd()))
         require_gpu = st.checkbox("Richiedi GPU (--require-gpu)", value=True)
@@ -341,6 +405,10 @@ def main() -> None:
 
     cfg_seed = dict(default_cfg)
     cfg_seed.update(loaded_cfg)
+    cfg_seed.setdefault("adaptive_spatial_sampling", bool(default_cfg.get("adaptive_spatial_sampling", False)))
+    cfg_seed.setdefault("adaptive_spatial_preview_steps", int(default_cfg.get("adaptive_spatial_preview_steps", 96)))
+    cfg_seed.setdefault("adaptive_spatial_min_scale", float(default_cfg.get("adaptive_spatial_min_scale", 0.65)))
+    cfg_seed.setdefault("adaptive_spatial_quantile", float(default_cfg.get("adaptive_spatial_quantile", 0.78)))
 
     st.subheader("Modalità")
     mode = st.radio("Tipo simulazione", ["Single Frame", "Video"], horizontal=True)
@@ -379,8 +447,25 @@ def main() -> None:
             ),
         )
     with c2:
-        spin = st.number_input("Spin a", value=float(cfg_seed["spin"]), step=0.01, format="%.6f")
-        charge = st.number_input("Charge Q", value=float(cfg_seed["charge"]), step=0.01, format="%.6f")
+        spin_default = max(-1.0, min(1.0, float(cfg_seed["spin"])))
+        charge_default = max(-1.0, min(1.0, float(cfg_seed["charge"])))
+        theta_default = _clamp(float(cfg_seed["observer_inclination_deg"]), 0.0, 180.0)
+        spin = st.number_input(
+            "Spin a",
+            min_value=-1.0,
+            max_value=1.0,
+            value=spin_default,
+            step=0.01,
+            format="%.6f",
+        )
+        charge = st.number_input(
+            "Charge Q",
+            min_value=-1.0,
+            max_value=1.0,
+            value=charge_default,
+            step=0.01,
+            format="%.6f",
+        )
         cosmological_constant = st.number_input(
             "Lambda",
             value=float(cfg_seed["cosmological_constant"]),
@@ -390,16 +475,28 @@ def main() -> None:
         observer_radius = st.number_input("Observer radius", value=float(cfg_seed["observer_radius"]), step=0.5)
         observer_inclination_deg = st.number_input(
             "Observer inclination (deg)",
-            value=float(cfg_seed["observer_inclination_deg"]),
+            min_value=0.0,
+            max_value=180.0,
+            value=theta_default,
             step=0.5,
         )
     with c3:
+        phi_default = _clamp(float(cfg_seed["observer_azimuth_deg"]), 0.0, 360.0)
         observer_azimuth_deg = st.number_input(
             "Observer azimuth (deg)",
-            value=float(cfg_seed["observer_azimuth_deg"]),
+            min_value=0.0,
+            max_value=360.0,
+            value=phi_default,
             step=0.5,
         )
-        observer_roll_deg = st.number_input("Observer roll (deg)", value=float(cfg_seed["observer_roll_deg"]), step=0.5)
+        roll_default = _clamp(float(cfg_seed["observer_roll_deg"]), 0.0, 360.0)
+        observer_roll_deg = st.number_input(
+            "Observer roll (deg)",
+            min_value=0.0,
+            max_value=360.0,
+            value=roll_default,
+            step=0.5,
+        )
         disk_model = st.selectbox(
             "Disk model",
             options=CHOICE_FIELDS["disk_model"],
@@ -461,6 +558,37 @@ def main() -> None:
         compile_rhs = st.checkbox("Compile RHS", value=bool(cfg_seed["compile_rhs"]))
         mixed_precision = st.checkbox("Mixed precision", value=bool(cfg_seed["mixed_precision"]))
         camera_fastpath = st.checkbox("Camera fastpath", value=bool(cfg_seed["camera_fastpath"]))
+        adaptive_spatial_sampling = bool(cfg_seed.get("adaptive_spatial_sampling", False))
+        adaptive_spatial_preview_steps = int(cfg_seed.get("adaptive_spatial_preview_steps", 96))
+        adaptive_spatial_min_scale = float(cfg_seed.get("adaptive_spatial_min_scale", 0.65))
+        adaptive_spatial_quantile = float(cfg_seed.get("adaptive_spatial_quantile", 0.78))
+        if supports_adaptive_spatial:
+            adaptive_spatial_sampling = st.checkbox(
+                "Adaptive spatial sampling",
+                value=adaptive_spatial_sampling,
+            )
+            adaptive_spatial_preview_steps = st.number_input(
+                "Adaptive preview steps",
+                min_value=16,
+                max_value=10000,
+                value=adaptive_spatial_preview_steps,
+                step=8,
+            )
+            adaptive_spatial_min_scale = st.number_input(
+                "Adaptive min scale",
+                min_value=0.10,
+                max_value=1.00,
+                value=adaptive_spatial_min_scale,
+                step=0.05,
+            )
+            adaptive_spatial_quantile = st.number_input(
+                "Adaptive quantile",
+                min_value=0.50,
+                max_value=0.995,
+                value=adaptive_spatial_quantile,
+                step=0.01,
+                format="%.3f",
+            )
         render_tile_rows = st.number_input(
             "Render tile rows (0=auto)",
             min_value=0,
@@ -487,6 +615,8 @@ def main() -> None:
         compile_rhs = True
         mixed_precision = True
         camera_fastpath = True
+        if supports_adaptive_spatial:
+            adaptive_spatial_sampling = True
         if device in {"mps", "auto"}:
             mps_optimized_kernel = True
         if int(render_tile_rows) <= 0 and int(height) >= 256:
@@ -495,16 +625,23 @@ def main() -> None:
         compile_rhs = True
         mixed_precision = True
         camera_fastpath = True
+        if supports_adaptive_spatial:
+            adaptive_spatial_sampling = True
         if device in {"mps", "auto"}:
             mps_optimized_kernel = True
         adaptive_integrator = False
         max_steps = min(int(max_steps), 360)
         step_size = max(float(step_size), 0.24)
+        if supports_adaptive_spatial:
+            adaptive_spatial_min_scale = min(float(adaptive_spatial_min_scale), 0.58)
+            adaptive_spatial_preview_steps = min(int(adaptive_spatial_preview_steps), 96)
         if int(render_tile_rows) <= 0:
             render_tile_rows = max(48, min(192, int(height // 3)))
     elif perf_profile == "High Fidelity":
         adaptive_integrator = True
         mixed_precision = False
+        if supports_adaptive_spatial:
+            adaptive_spatial_sampling = False
 
     st.subheader("Sfondo")
     b1, b2, b3 = st.columns(3)
@@ -530,7 +667,14 @@ def main() -> None:
     with b3:
         hdri_path = st.text_input("HDRI path", value=str(cfg_seed.get("hdri_path") or ""))
         hdri_exposure = st.number_input("HDRI exposure", min_value=0.01, value=float(cfg_seed["hdri_exposure"]), step=0.1)
-        hdri_rotation_deg = st.number_input("HDRI rotation (deg)", value=float(cfg_seed["hdri_rotation_deg"]), step=1.0)
+        hdri_rotation_default = _clamp(float(cfg_seed["hdri_rotation_deg"]), 0.0, 360.0)
+        hdri_rotation_deg = st.number_input(
+            "HDRI rotation (deg)",
+            min_value=0.0,
+            max_value=360.0,
+            value=hdri_rotation_default,
+            step=1.0,
+        )
 
     video_params: dict[str, Any] = {}
     if mode == "Video":
@@ -543,8 +687,28 @@ def main() -> None:
         with v2:
             video_params["inclination_wobble_deg"] = st.number_input("Inclination wobble", value=0.0, step=0.5)
             use_incl_sweep = st.checkbox("Inclination sweep", value=True)
-            video_params["inclination_start_deg"] = st.number_input("Inclination start", value=0.0, step=1.0) if use_incl_sweep else None
-            video_params["inclination_end_deg"] = st.number_input("Inclination end", value=180.0, step=1.0) if use_incl_sweep else None
+            video_params["inclination_start_deg"] = (
+                st.number_input(
+                    "Inclination start",
+                    min_value=0.0,
+                    max_value=180.0,
+                    value=0.0,
+                    step=1.0,
+                )
+                if use_incl_sweep
+                else None
+            )
+            video_params["inclination_end_deg"] = (
+                st.number_input(
+                    "Inclination end",
+                    min_value=0.0,
+                    max_value=180.0,
+                    value=180.0,
+                    step=1.0,
+                )
+                if use_incl_sweep
+                else None
+            )
         with v3:
             use_radius_sweep = st.checkbox("Radius sweep", value=False)
             video_params["observer_radius_start"] = st.number_input("Radius start", value=float(observer_radius), step=0.5) if use_radius_sweep else None
@@ -611,6 +775,15 @@ def main() -> None:
             "output": output_path,
         }
     )
+    if supports_adaptive_spatial:
+        config_dict.update(
+            {
+                "adaptive_spatial_sampling": bool(adaptive_spatial_sampling),
+                "adaptive_spatial_preview_steps": int(adaptive_spatial_preview_steps),
+                "adaptive_spatial_min_scale": float(adaptive_spatial_min_scale),
+                "adaptive_spatial_quantile": float(adaptive_spatial_quantile),
+            }
+        )
 
     run_col, preview_col = st.columns([1, 2])
     with run_col:
@@ -726,23 +899,14 @@ def main() -> None:
         st.error(f"Simulazione fallita (exit={rc}). Log: {log_path}")
         return
 
-    out_from_log = _extract_output_path_from_log(log_text, workspace_path)
-    out_file = out_from_log if out_from_log is not None else Path(cfg_obj.output)
-    if not out_file.is_absolute():
-        out_file = workspace_path / out_file
-    out_file = out_file.resolve()
-    if not out_file.exists():
-        suffix = out_file.suffix.lower()
-        candidates = sorted(
-            (workspace_path / "out").glob(f"**/*{suffix}"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        if candidates:
-            out_file = candidates[0].resolve()
-        else:
-            st.warning(f"Output non trovato: {out_file}")
-            return
+    out_file = _resolve_output_file(
+        log_text=log_text,
+        workspace_path=workspace_path,
+        out_hint=Path(cfg_obj.output),
+    )
+    if out_file is None or (not out_file.exists()):
+        st.warning(f"Output non trovato automaticamente. Atteso: {Path(cfg_obj.output)}")
+        return
 
     st.session_state["last_output_path"] = str(out_file)
     _show_output_media(out_file)

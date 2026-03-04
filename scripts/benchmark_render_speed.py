@@ -111,6 +111,10 @@ def _profile_config(cfg: RenderConfig, profile: str) -> RenderConfig:
             compile_rhs=True,
             mixed_precision=True,
             mps_optimized_kernel=True,
+            adaptive_spatial_sampling=True,
+            adaptive_spatial_preview_steps=max(64, min(int(cfg.max_steps // 2), 120)),
+            adaptive_spatial_min_scale=0.65,
+            adaptive_spatial_quantile=0.78,
             render_tile_rows=tile_rows,
             show_progress_bar=False,
         )

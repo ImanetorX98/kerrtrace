@@ -37,6 +37,66 @@ Oppure installazione package locale:
 pip install -e .
 ```
 
+## Installazione su Windows (PowerShell)
+
+Apri **PowerShell** nella cartella del progetto (`kerrtrace-main`) e usa questi passaggi:
+
+1. Crea il virtual environment (usa `python` se `py` non e' disponibile):
+
+```powershell
+py -3.11 -m venv .venv
+```
+
+Fallback:
+
+```powershell
+python -m venv .venv
+```
+
+2. Se l'attivazione e' bloccata da Execution Policy:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+3. Attiva l'ambiente:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+4. Aggiorna pip e installa dipendenze:
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+5. (Consigliato) Installa FFmpeg per export video:
+
+```powershell
+winget install -e --id Gyan.FFmpeg
+```
+
+Verifica:
+
+```powershell
+ffmpeg -version
+```
+
+6. Avvio rapido:
+
+```powershell
+python -m kerrtrace --width 640 --height 360 --output out\smoke.png
+```
+
+WebUI:
+
+```powershell
+streamlit run kerrtrace\webui.py
+```
+
 ## Web UI interattiva
 
 Puoi lanciare simulazioni frame/video da browser locale, con parametri interattivi e preset qualita':
@@ -228,6 +288,10 @@ Setup rapido ambiente MPS (Python 3.11):
 - `compile_rhs`, `mixed_precision`: opzioni performance GPU.
 - `mps_optimized_kernel`: abilita fast path MPS (integrazione fixed-step con interpolazione eventi leggera, piu' veloce ma meno accurata del percorso completo adattivo).
 - `camera_fastpath`: abilita init raggi camera ottimizzata (disabilitabile per confronti benchmark con percorso legacy).
+- `adaptive_spatial_sampling`: abilita scheduling adattivo per-blocco di `max_steps` su base complessita' spaziale (preview + gradiente), utile per ridurre tempo mantenendo i dettagli difficili.
+- `adaptive_spatial_preview_steps`: `max_steps` usato nel pass di preview per stimare la complessita' spaziale.
+- `adaptive_spatial_min_scale`: scala minima applicata a `max_steps` nei blocchi a bassa complessita'.
+- `adaptive_spatial_quantile`: quantile del gradiente usato per normalizzare la mappa di complessita'.
 - `diagnose_device`: stampa diagnostica backend (`cuda`/`mps`) e suggerimenti.
 
 ## Note numeriche

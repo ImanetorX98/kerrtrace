@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Callable
 
@@ -327,47 +328,54 @@ def _render_frames(
         radius_factor = min(1.0, 24.0 / radius)
         return 0.80 * inc_factor + 0.20 * radius_factor
 
-    def _render_single(index: int) -> tuple[int, RenderConfig, np.ndarray]:
+    tracer_tls = threading.local()
+    sequential_tracer: KerrRayTracer | None = None
+
+    def _get_thread_tracer(seed_cfg: RenderConfig) -> KerrRayTracer:
+        tracer = getattr(tracer_tls, "tracer", None)
+        if tracer is None:
+            tracer = KerrRayTracer(seed_cfg)
+            tracer_tls.tracer = tracer
+        return tracer
+
+    def _render_single(index: int, tracer: KerrRayTracer | None = None) -> tuple[int, RenderConfig, np.ndarray]:
         phase = 0.0 if frames == 1 else index / (frames - 1)
         nominal_cfg = config_at_phase(phase)
         accum: np.ndarray | None = None
-        tracer = KerrRayTracer(nominal_cfg)
+        work_tracer = tracer if tracer is not None else _get_thread_tracer(nominal_cfg)
 
-        try:
-            for sample_idx in range(taa_samples):
-                if taa_samples == 1:
-                    sample_phase = phase
-                else:
-                    sample_t = (sample_idx + 0.5) / taa_samples
-                    dt = (sample_t - 0.5) * shutter_fraction / max(frames - 1, 1)
-                    sample_phase = min(1.0, max(0.0, phase + dt))
+        for sample_idx in range(taa_samples):
+            if taa_samples == 1:
+                sample_phase = phase
+            else:
+                sample_t = (sample_idx + 0.5) / taa_samples
+                dt = (sample_t - 0.5) * shutter_fraction / max(frames - 1, 1)
+                sample_phase = min(1.0, max(0.0, phase + dt))
 
-                frame_config = config_at_phase(sample_phase)
-                frame_steps = _frame_steps_for_config(frame_config)
-                tracer.set_observer(
-                    observer_radius=frame_config.observer_radius,
-                    observer_inclination_deg=frame_config.observer_inclination_deg,
-                    observer_azimuth_deg=frame_config.observer_azimuth_deg,
-                    observer_roll_deg=frame_config.observer_roll_deg,
-                    max_steps=frame_steps,
-                )
+            frame_config = config_at_phase(sample_phase)
+            frame_steps = _frame_steps_for_config(frame_config)
+            work_tracer.set_observer(
+                observer_radius=frame_config.observer_radius,
+                observer_inclination_deg=frame_config.observer_inclination_deg,
+                observer_azimuth_deg=frame_config.observer_azimuth_deg,
+                observer_roll_deg=frame_config.observer_roll_deg,
+                max_steps=frame_steps,
+            )
 
-                x_jitter = 0.0
-                y_jitter = 0.0
-                if spatial_jitter and taa_samples > 1:
-                    j = index * taa_samples + sample_idx + 1
-                    x_jitter = (2.0 * _radical_inverse(j, 2) - 1.0) * jitter_strength
-                    y_jitter = (2.0 * _radical_inverse(j, 3) - 1.0) * jitter_strength
+            x_jitter = 0.0
+            y_jitter = 0.0
+            if spatial_jitter and taa_samples > 1:
+                j = index * taa_samples + sample_idx + 1
+                x_jitter = (2.0 * _radical_inverse(j, 2) - 1.0) * jitter_strength
+                y_jitter = (2.0 * _radical_inverse(j, 3) - 1.0) * jitter_strength
 
-                result = tracer.render(x_pixel_offset=x_jitter, y_pixel_offset=y_jitter)
-                rgb = np.asarray(result.image, dtype=np.float32)
-                del result
-                if accum is None:
-                    accum = rgb
-                else:
-                    accum += rgb
-        finally:
-            del tracer
+            result = work_tracer.render(x_pixel_offset=x_jitter, y_pixel_offset=y_jitter)
+            rgb = np.asarray(result.image, dtype=np.float32)
+            del result
+            if accum is None:
+                accum = rgb
+            else:
+                accum += rgb
 
         if accum is None:
             raise RuntimeError("Frame accumulation failed")
@@ -444,6 +452,7 @@ def _render_frames(
 
     prev_temporal: np.ndarray | None = None
     prev_temporal_cfg: RenderConfig | None = None
+    sequential_tracer = KerrRayTracer(config_at_phase(0.0))
     sequential_t0 = time.perf_counter()
     rendered_done = 0
     total_to_render = len(pending_indices)
@@ -452,7 +461,20 @@ def _render_frames(
         if resume_frames and frame_path.exists():
             print(f"Frame {index + 1}/{frames}: {frame_path} (existing, skipped)")
             continue
-        index, nominal_cfg, avg_u8, frame_dt, attempts = _render_single_with_retry(index)
+        t_frame = time.perf_counter()
+        try:
+            idx, nominal_cfg, avg_u8 = _render_single(index, tracer=sequential_tracer)
+            frame_dt = time.perf_counter() - t_frame
+            attempts = 1
+            index = idx
+            if frame_dt >= slow_frame_warn_seconds:
+                print(
+                    f"Frame {index + 1}/{frames}: slow frame ({frame_dt:.2f}s). "
+                    "If interrupted, rerun with --resume-frames."
+                )
+        except Exception as exc:
+            print(f"Frame {index + 1}/{frames}: sequential reusable tracer failed, fallback to retry path: {exc}")
+            index, nominal_cfg, avg_u8, frame_dt, attempts = _render_single_with_retry(index)
         avg = avg_u8.astype(np.float32)
         if base_config.temporal_reprojection and prev_temporal is not None and prev_temporal_cfg is not None:
             shift_x, shift_y = _estimate_motion_shift_pixels(prev_temporal_cfg, nominal_cfg)
