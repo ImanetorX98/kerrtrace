@@ -1,0 +1,5 @@
+torch>=2.2
+Pillow>=10.0
+numpy<2
+click>=8.1
+streamlit>=1.35
