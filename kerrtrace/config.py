@@ -112,6 +112,7 @@ class RenderConfig:
     adaptive_spatial_min_scale: float = 0.65
     adaptive_spatial_quantile: float = 0.78
     show_progress_bar: bool = True
+    progress_backend: str = "manual"
     animation_workers: int = 1
     quality_lock: bool = False
     quality_lock_psnr_min: float = 45.0
@@ -311,6 +312,8 @@ class RenderConfig:
             raise ValueError("adaptive_spatial_min_scale must be in (0, 1]")
         if cfg.adaptive_spatial_quantile < 0.50 or cfg.adaptive_spatial_quantile > 0.995:
             raise ValueError("adaptive_spatial_quantile must be in [0.50, 0.995]")
+        if cfg.progress_backend not in {"manual", "tqdm", "auto"}:
+            raise ValueError("progress_backend must be 'manual', 'tqdm', or 'auto'")
         if cfg.animation_workers < 1 or cfg.animation_workers > 64:
             raise ValueError("animation_workers must be in [1, 64]")
         if cfg.quality_lock_psnr_min <= 0.0:

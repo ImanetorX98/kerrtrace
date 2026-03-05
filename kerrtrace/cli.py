@@ -205,6 +205,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--disable-progress-bar", action="store_true", help="Disable terminal row progress bar")
     parser.add_argument("--enable-progress-bar", action="store_true", help="Enable terminal row progress bar")
+    parser.add_argument(
+        "--progress-backend",
+        choices=["manual", "tqdm", "auto"],
+        help="Progress renderer backend (manual custom bar or tqdm)",
+    )
     parser.add_argument("--animation-workers", type=int, help="Parallel frame workers for CPU animation")
     parser.add_argument("--enable-quality-lock", action="store_true", help="Compare optimized KS mode vs baseline before final render")
     parser.add_argument("--disable-quality-lock-fallback", action="store_true", help="Do not fallback to baseline if quality lock fails")
@@ -382,6 +387,7 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "adaptive_spatial_preview_steps": args.adaptive_spatial_preview_steps,
         "adaptive_spatial_min_scale": args.adaptive_spatial_min_scale,
         "adaptive_spatial_quantile": args.adaptive_spatial_quantile,
+        "progress_backend": args.progress_backend,
         "animation_workers": args.animation_workers,
         "quality_lock_psnr_min": args.quality_lock_psnr_min,
         "quality_lock_ssim_min": args.quality_lock_ssim_min,

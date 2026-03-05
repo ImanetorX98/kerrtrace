@@ -53,6 +53,7 @@ CHOICE_FIELDS: dict[str, list[str]] = {
     "kerr_schild_mode": ["off", "fsal_only", "analytic"],
     "device": ["auto", "cpu", "cuda", "mps"],
     "dtype": ["float32", "float64"],
+    "progress_backend": ["manual", "tqdm", "auto"],
     "video_codec": ["h264", "h265_10bit"],
     "tone_mapper": ["reinhard", "aces"],
     "postprocess_pipeline": ["off", "gargantua"],
@@ -62,6 +63,163 @@ AUTHOR_SIGNATURE = "Iman Rosignoli"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".gif"}
 MEDIA_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
+
+LANGUAGE_OPTIONS: dict[str, str] = {
+    "it": "Italiano",
+    "en": "English",
+    "es": "Español",
+    "ro": "Română",
+    "ru": "Русский",
+    "zh": "中文(简体)",
+    "fr": "Français",
+    "de": "Deutsch",
+    "pt": "Português",
+}
+
+I18N: dict[str, dict[str, str]] = {
+    "en": {
+        "page_title": "KerrTrace WebUI",
+        "title": "KerrTrace WebUI",
+        "author_label": "Author",
+        "intro_caption": "This interface creates a RenderConfig JSON and runs `python -m kerrtrace --config ...`.",
+        "last_output": "Last output preview",
+        "manual_open": "Open file manually",
+        "manual_path": "File path (absolute or relative to workspace)",
+        "open_file": "Open file",
+        "use_last_output": "Use last output",
+        "clear": "Clear",
+        "empty_path": "Enter a file path.",
+        "missing_file": "File not found:",
+        "unsupported_file": "Unsupported file extension for preview:",
+        "resolved_file": "Resolved file:",
+        "run_header": "Run",
+        "language_label": "Language",
+        "workspace_label": "Workspace",
+        "require_gpu": "Require GPU (--require-gpu)",
+        "upload_json": "Upload JSON config",
+        "json_not_object": "Uploaded JSON is not an object.",
+        "json_invalid": "Invalid JSON:",
+        "mode_header": "Mode",
+        "mode_label": "Simulation type",
+        "mode_single_frame": "Single Frame",
+        "mode_video": "Video",
+        "quality_header": "Quality / Resolution",
+        "quality_preset": "Quality preset",
+        "resolution_set": "Resolution set to",
+        "run_live": "Run simulation (live)",
+        "run_bg": "Run in background",
+        "bg_job": "Background job",
+        "job_running": "Running",
+        "job_completed": "Job completed",
+        "job_failed": "Job failed",
+        "refresh_monitor": "Refresh monitor",
+        "stop_job": "Stop job",
+        "clear_job": "Clear job state",
+        "output_not_found_auto": "Output not found automatically. Check the path in the log.",
+        "cmd_launched": "Command launched:",
+        "cfg_used": "Config JSON used:",
+        "sim_completed": "Simulation completed. Log:",
+        "sim_failed": "Simulation failed",
+        "output_not_found_expected": "Output not found automatically. Expected:",
+    },
+    "es": {
+        "author_label": "Autor",
+        "intro_caption": "Esta interfaz genera un JSON RenderConfig y ejecuta `python -m kerrtrace --config ...`.",
+        "last_output": "Vista previa de la última salida",
+        "manual_open": "Abrir archivo manualmente",
+        "manual_path": "Ruta del archivo (absoluta o relativa al workspace)",
+        "open_file": "Abrir archivo",
+        "use_last_output": "Usar última salida",
+        "clear": "Limpiar",
+        "empty_path": "Introduce una ruta de archivo.",
+        "missing_file": "Archivo no encontrado:",
+        "unsupported_file": "Extensión no soportada para vista previa:",
+        "resolved_file": "Archivo resuelto:",
+        "run_header": "Ejecución",
+        "language_label": "Idioma",
+        "workspace_label": "Workspace",
+        "require_gpu": "Requerir GPU (--require-gpu)",
+        "upload_json": "Subir configuración JSON",
+        "json_not_object": "El JSON cargado no es un objeto.",
+        "json_invalid": "JSON inválido:",
+        "mode_header": "Modo",
+        "mode_label": "Tipo de simulación",
+        "mode_single_frame": "Fotograma único",
+        "mode_video": "Video",
+        "quality_header": "Calidad / Resolución",
+        "quality_preset": "Preset de calidad",
+        "resolution_set": "Resolución establecida en",
+        "run_live": "Lanzar simulación (en vivo)",
+        "run_bg": "Lanzar en segundo plano",
+    },
+    "ro": {
+        "author_label": "Autor",
+        "manual_open": "Deschide fișier manual",
+        "manual_path": "Cale fișier (absolută sau relativă la workspace)",
+        "open_file": "Deschide fișier",
+        "use_last_output": "Folosește ultimul output",
+        "clear": "Șterge",
+        "run_header": "Rulare",
+        "language_label": "Limbă",
+        "mode_header": "Mod",
+        "mode_label": "Tip simulare",
+        "mode_single_frame": "Cadru unic",
+        "mode_video": "Video",
+        "run_live": "Rulează simularea (live)",
+        "run_bg": "Rulează în fundal",
+    },
+    "ru": {
+        "author_label": "Автор",
+        "manual_open": "Открыть файл вручную",
+        "manual_path": "Путь к файлу (абсолютный или относительно workspace)",
+        "open_file": "Открыть файл",
+        "use_last_output": "Использовать последний вывод",
+        "clear": "Очистить",
+        "run_header": "Запуск",
+        "language_label": "Язык",
+        "mode_header": "Режим",
+        "mode_label": "Тип симуляции",
+        "mode_single_frame": "Один кадр",
+        "mode_video": "Видео",
+        "run_live": "Запустить симуляцию (live)",
+        "run_bg": "Запустить в фоне",
+    },
+    "zh": {
+        "author_label": "作者",
+        "manual_open": "手动打开文件",
+        "manual_path": "文件路径（绝对路径或相对 workspace）",
+        "open_file": "打开文件",
+        "use_last_output": "使用最近输出",
+        "clear": "清除",
+        "run_header": "运行",
+        "language_label": "语言",
+        "mode_header": "模式",
+        "mode_label": "模拟类型",
+        "mode_single_frame": "单帧",
+        "mode_video": "视频",
+        "run_live": "实时运行模拟",
+        "run_bg": "后台运行",
+    },
+    "fr": {
+        "author_label": "Auteur",
+        "language_label": "Langue",
+        "manual_open": "Ouvrir un fichier manuellement",
+    },
+    "de": {
+        "author_label": "Autor",
+        "language_label": "Sprache",
+        "manual_open": "Datei manuell öffnen",
+    },
+    "pt": {
+        "author_label": "Autor",
+        "language_label": "Idioma",
+        "manual_open": "Abrir ficheiro manualmente",
+    },
+}
+
+
+def tr(lang: str, key: str, default: str) -> str:
+    return I18N.get(lang, {}).get(key, default)
 
 
 def _default_python() -> str:
@@ -81,10 +239,15 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
-def _run_command_live(cmd: list[str], cwd: Path, log_placeholder: Any) -> tuple[int, str]:
+def _run_command_live(
+    cmd: list[str],
+    cwd: Path,
+    log_placeholder: Any,
+    progress_widget: Any | None = None,
+) -> tuple[int, str]:
     chunks: list[str] = []
     max_log_chars = 120_000
-    progress_re = re.compile(r"\(\s*(\d+)\s*/\s*(\d+)\s*\)")
+    progress_re = re.compile(r"(\d+)\s*/\s*(\d+)")
     pending = ""
     last_progress_key: tuple[int, int] | None = None
 
@@ -102,13 +265,20 @@ def _run_command_live(cmd: list[str], cwd: Path, log_placeholder: Any) -> tuple[
             return
         stripped = line.strip()
         if stripped.startswith("Render rows"):
-            m = progress_re.search(stripped)
-            if m is not None:
-                key = (int(m.group(1)), int(m.group(2)))
-                # Ignore ETA ticker refreshes when progress did not advance.
-                if from_carriage and key == last_progress_key:
+            matches = progress_re.findall(stripped)
+            if matches:
+                done_s, total_s = matches[-1]
+                key = (int(done_s), int(total_s))
+                # Ignore ticker refreshes when progress did not advance.
+                if key == last_progress_key:
                     return
                 last_progress_key = key
+                if progress_widget is not None and key[1] > 0:
+                    ratio = max(0.0, min(1.0, float(key[0]) / float(key[1])))
+                    progress_widget.progress(
+                        ratio,
+                        text=f"Render rows: {key[0]}/{key[1]} ({ratio * 100.0:.1f}%)",
+                    )
             _push(stripped + "\n")
             return
         _push(line + "\n")
@@ -165,6 +335,14 @@ def _run_command_live(cmd: list[str], cwd: Path, log_placeholder: Any) -> tuple[
 
     if pending:
         _process_line(pending, from_carriage=False)
+
+    if progress_widget is not None and last_progress_key is not None and last_progress_key[1] > 0:
+        done, total = last_progress_key
+        ratio = max(0.0, min(1.0, float(done) / float(total)))
+        progress_widget.progress(
+            ratio,
+            text=f"Render rows: {done}/{total} ({ratio * 100.0:.1f}%)",
+        )
 
     return rc, "".join(chunks)
 
@@ -303,13 +481,41 @@ def _resolve_output_file(
     return _latest_media_in_out(workspace_path=workspace_path, suffix=preferred_suffix)
 
 
+def _resolve_manual_media_path(raw_path: str, workspace_path: Path) -> tuple[Path | None, str]:
+    raw = str(raw_path or "").strip()
+    if not raw:
+        return None, "empty"
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = workspace_path / path
+    try:
+        path = path.resolve()
+    except Exception:
+        path = path.absolute()
+    if not path.exists():
+        return None, "missing"
+    if path.suffix.lower() not in MEDIA_SUFFIXES:
+        return None, "unsupported"
+    return path, ""
+
+
 def main() -> None:
-    st.set_page_config(page_title="KerrTrace WebUI", layout="wide")
-    st.title("KerrTrace WebUI")
-    st.markdown(f"**Autore:** `{AUTHOR_SIGNATURE}`")
+    if "ui_lang" not in st.session_state:
+        st.session_state["ui_lang"] = "it"
+    lang = str(st.session_state.get("ui_lang", "it"))
+    if lang not in LANGUAGE_OPTIONS:
+        lang = "it"
+        st.session_state["ui_lang"] = "it"
+
+    st.set_page_config(page_title=tr(lang, "page_title", "KerrTrace WebUI"), layout="wide")
+    st.title(tr(lang, "title", "KerrTrace WebUI"))
+    st.markdown(f"**{tr(lang, 'author_label', 'Autore')}:** `{AUTHOR_SIGNATURE}`")
     st.caption(
-        "Questa interfaccia genera un JSON RenderConfig e lancia "
-        "`python -m kerrtrace --config ...`."
+        tr(
+            lang,
+            "intro_caption",
+            "Questa interfaccia genera un JSON RenderConfig e lancia `python -m kerrtrace --config ...`.",
+        )
     )
     if "last_output_path" not in st.session_state:
         st.session_state["last_output_path"] = ""
@@ -321,7 +527,7 @@ def main() -> None:
     if last_output_raw:
         last_output = Path(last_output_raw)
         if last_output.exists():
-            with st.expander("Anteprima ultimo output", expanded=True):
+            with st.expander(tr(lang, "last_output", "Anteprima ultimo output"), expanded=True):
                 _show_output_media(last_output)
 
     async_proc = st.session_state.get("async_proc")
@@ -334,17 +540,17 @@ def main() -> None:
         cfg_async = str(async_meta.get("cfg_path", ""))
         rc = async_proc.poll()
         running = rc is None
-        with st.expander("Job in background", expanded=True):
+        with st.expander(tr(lang, "bg_job", "Job in background"), expanded=True):
             if running:
                 st.info(
-                    f"In esecuzione (PID {getattr(async_proc, 'pid', 'n/a')}) "
+                    f"{tr(lang, 'job_running', 'In esecuzione')} (PID {getattr(async_proc, 'pid', 'n/a')}) "
                     f"- started: {started_at}"
                 )
             else:
                 if int(rc) == 0:
-                    st.success(f"Job completato (exit={rc})")
+                    st.success(f"{tr(lang, 'job_completed', 'Job completato')} (exit={rc})")
                 else:
-                    st.error(f"Job terminato con errore (exit={rc})")
+                    st.error(f"{tr(lang, 'job_failed', 'Job terminato con errore')} (exit={rc})")
             if cfg_async:
                 st.caption(f"Config: {cfg_async}")
             if log_path:
@@ -356,10 +562,10 @@ def main() -> None:
             c_job_1, c_job_2 = st.columns(2)
             with c_job_1:
                 if running:
-                    if st.button("Aggiorna monitor"):
+                    if st.button(tr(lang, "refresh_monitor", "Aggiorna monitor")):
                         st.rerun()
             with c_job_2:
-                if running and st.button("Interrompi job"):
+                if running and st.button(tr(lang, "stop_job", "Interrompi job")):
                     try:
                         async_proc.terminate()
                     except Exception:
@@ -376,8 +582,8 @@ def main() -> None:
                     st.session_state["last_output_path"] = str(out_file)
                     _show_output_media(out_file)
                 else:
-                    st.warning("Output non trovato automaticamente. Controlla il path nel log.")
-                if st.button("Pulisci stato job"):
+                    st.warning(tr(lang, "output_not_found_auto", "Output non trovato automaticamente. Controlla il path nel log."))
+                if st.button(tr(lang, "clear_job", "Pulisci stato job")):
                     st.session_state["async_proc"] = None
                     st.session_state["async_meta"] = {}
                     st.rerun()
@@ -387,20 +593,29 @@ def main() -> None:
     loaded_cfg: dict[str, Any] = {}
 
     with st.sidebar:
-        st.header("Run")
-        st.caption(f"Autore: {AUTHOR_SIGNATURE}")
+        st.header(tr(lang, "run_header", "Run"))
+        st.caption(f"{tr(lang, 'author_label', 'Autore')}: {AUTHOR_SIGNATURE}")
+        lang_options = list(LANGUAGE_OPTIONS.keys())
+        lang_idx = lang_options.index(lang) if lang in lang_options else 0
+        lang = st.selectbox(
+            tr(lang, "language_label", "Lingua / Language"),
+            options=lang_options,
+            index=lang_idx,
+            format_func=lambda code: LANGUAGE_OPTIONS.get(code, code),
+        )
+        st.session_state["ui_lang"] = lang
         python_exec = st.text_input("Python executable", value=_default_python())
-        workspace = st.text_input("Workspace", value=str(Path.cwd()))
-        require_gpu = st.checkbox("Richiedi GPU (--require-gpu)", value=True)
-        uploaded = st.file_uploader("Carica config JSON", type=["json"])
+        workspace = st.text_input(tr(lang, "workspace_label", "Workspace"), value=str(Path.cwd()))
+        require_gpu = st.checkbox(tr(lang, "require_gpu", "Richiedi GPU (--require-gpu)"), value=True)
+        uploaded = st.file_uploader(tr(lang, "upload_json", "Carica config JSON"), type=["json"])
         if uploaded is not None:
             try:
                 loaded_cfg = json.loads(uploaded.read().decode("utf-8"))
                 if not isinstance(loaded_cfg, dict):
-                    st.error("Il JSON caricato non è un oggetto.")
+                    st.error(tr(lang, "json_not_object", "Il JSON caricato non è un oggetto."))
                     loaded_cfg = {}
             except Exception as exc:
-                st.error(f"JSON non valido: {exc}")
+                st.error(f"{tr(lang, 'json_invalid', 'JSON non valido')}: {exc}")
                 loaded_cfg = {}
 
     cfg_seed = dict(default_cfg)
@@ -410,25 +625,71 @@ def main() -> None:
     cfg_seed.setdefault("adaptive_spatial_min_scale", float(default_cfg.get("adaptive_spatial_min_scale", 0.65)))
     cfg_seed.setdefault("adaptive_spatial_quantile", float(default_cfg.get("adaptive_spatial_quantile", 0.78)))
 
-    st.subheader("Modalità")
-    mode = st.radio("Tipo simulazione", ["Single Frame", "Video"], horizontal=True)
+    workspace_path_preview = Path(workspace).expanduser().resolve()
+    with st.expander(tr(lang, "manual_open", "Apri file manuale"), expanded=False):
+        manual_default = str(
+            st.session_state.get(
+                "manual_open_path_input",
+                st.session_state.get("manual_open_path", ""),
+            )
+        )
+        manual_input = st.text_input(
+            tr(lang, "manual_path", "Percorso file (assoluto o relativo al workspace)"),
+            value=manual_default,
+            key="manual_open_path_input",
+        )
+        c_open_1, c_open_2, c_open_3 = st.columns(3)
+        with c_open_1:
+            open_manual = st.button(tr(lang, "open_file", "Apri file"))
+        with c_open_2:
+            use_last = st.button(tr(lang, "use_last_output", "Usa ultimo output"))
+        with c_open_3:
+            clear_manual = st.button(tr(lang, "clear", "Pulisci"))
+        if use_last:
+            st.session_state["manual_open_path_input"] = str(st.session_state.get("last_output_path") or "")
+            st.rerun()
+        if clear_manual:
+            st.session_state["manual_open_path_input"] = ""
+            st.rerun()
+        if open_manual:
+            resolved, reason = _resolve_manual_media_path(manual_input, workspace_path_preview)
+            if resolved is not None:
+                st.session_state["manual_open_path"] = str(resolved)
+                st.session_state["manual_open_path_input"] = str(resolved)
+                st.session_state["last_output_path"] = str(resolved)
+                st.caption(f"{tr(lang, 'resolved_file', 'File risolto')}: `{resolved}`")
+                _show_output_media(resolved)
+            elif reason == "empty":
+                st.warning(tr(lang, "empty_path", "Inserisci un percorso file."))
+            elif reason == "missing":
+                st.error(f"{tr(lang, 'missing_file', 'File non trovato')}: `{manual_input}`")
+            elif reason == "unsupported":
+                st.error(f"{tr(lang, 'unsupported_file', 'Estensione non supportata per preview')}: `{manual_input}`")
 
-    st.subheader("Qualità / Risoluzione")
+    st.subheader(tr(lang, "mode_header", "Modalità"))
+    mode = st.radio(
+        tr(lang, "mode_label", "Tipo simulazione"),
+        ["single_frame", "video"],
+        format_func=lambda v: tr(lang, f"mode_{v}", "Single Frame" if v == "single_frame" else "Video"),
+        horizontal=True,
+    )
+
+    st.subheader(tr(lang, "quality_header", "Qualità / Risoluzione"))
     reverse_quality = {v: k for k, v in QUALITY_PRESETS.items()}
     current_wh = (int(cfg_seed["width"]), int(cfg_seed["height"]))
     preset_labels = ["Custom"] + list(QUALITY_PRESETS.keys())
     default_preset = reverse_quality.get(current_wh, "Custom")
-    preset = st.selectbox("Preset qualità", options=preset_labels, index=preset_labels.index(default_preset))
+    preset = st.selectbox(tr(lang, "quality_preset", "Preset qualità"), options=preset_labels, index=preset_labels.index(default_preset))
     if preset == "Custom":
         width = st.number_input("Width", min_value=64, max_value=5000, value=int(cfg_seed["width"]), step=1)
         height = st.number_input("Height", min_value=64, max_value=5000, value=int(cfg_seed["height"]), step=1)
     else:
         width, height = QUALITY_PRESETS[preset]
-        st.info(f"Risoluzione impostata a {width}x{height}")
+        st.info(f"{tr(lang, 'resolution_set', 'Risoluzione impostata a')} {width}x{height}")
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        output_default = "out/webui_frame.png" if mode == "Single Frame" else "out/webui_video.mp4"
+        output_default = "out/webui_frame.png" if mode == "single_frame" else "out/webui_video.mp4"
         output_seed = loaded_cfg.get("output", output_default)
         output_path = st.text_input("Output file", value=str(output_seed))
         fov_deg = st.number_input("FOV (deg)", value=float(cfg_seed["fov_deg"]), step=0.1, format="%.3f")
@@ -553,6 +814,14 @@ def main() -> None:
             index=CHOICE_FIELDS["dtype"].index(_safe_choice(CHOICE_FIELDS["dtype"], str(cfg_seed["dtype"]))),
         )
         show_progress_bar = st.checkbox("Show progress bar", value=bool(cfg_seed["show_progress_bar"]))
+        progress_backend = st.selectbox(
+            "Progress backend",
+            options=CHOICE_FIELDS["progress_backend"],
+            index=CHOICE_FIELDS["progress_backend"].index(
+                _safe_choice(CHOICE_FIELDS["progress_backend"], str(cfg_seed.get("progress_backend", "manual")))
+            ),
+            help="manual: barra custom; tqdm: barra tqdm; auto: usa tqdm quando disponibile",
+        )
     with d4:
         mps_optimized_kernel = st.checkbox("MPS optimized kernel", value=bool(cfg_seed["mps_optimized_kernel"]))
         compile_rhs = st.checkbox("Compile RHS", value=bool(cfg_seed["compile_rhs"]))
@@ -677,7 +946,7 @@ def main() -> None:
         )
 
     video_params: dict[str, Any] = {}
-    if mode == "Video":
+    if mode == "video":
         st.subheader("Parametri video")
         v1, v2, v3, v4 = st.columns(4)
         with v1:
@@ -757,6 +1026,7 @@ def main() -> None:
             "device": device,
             "dtype": dtype,
             "show_progress_bar": bool(show_progress_bar),
+            "progress_backend": progress_backend,
             "mps_optimized_kernel": bool(mps_optimized_kernel),
             "compile_rhs": bool(compile_rhs),
             "mixed_precision": bool(mixed_precision),
@@ -787,8 +1057,8 @@ def main() -> None:
 
     run_col, preview_col = st.columns([1, 2])
     with run_col:
-        run_now_live = st.button("Lancia simulazione (live)", type="primary")
-        run_now_bg = st.button("Lancia in background")
+        run_now_live = st.button(tr(lang, "run_live", "Lancia simulazione (live)"), type="primary")
+        run_now_bg = st.button(tr(lang, "run_bg", "Lancia in background"))
     with preview_col:
         st.code(json.dumps(config_dict, indent=2), language="json")
 
@@ -813,7 +1083,7 @@ def main() -> None:
     cmd = [python_exec, "-m", "kerrtrace", "--config", str(cfg_path), "--output", str(cfg_obj.output)]
     if require_gpu:
         cmd.append("--require-gpu")
-    if mode == "Video":
+    if mode == "video":
         cmd += [
             "--animate",
             "--frames",
@@ -854,9 +1124,9 @@ def main() -> None:
         if not bool(video_params["adaptive_frame_steps"]):
             cmd.append("--disable-adaptive-frame-steps")
 
-    st.info("Comando lanciato:")
+    st.info(tr(lang, "cmd_launched", "Comando lanciato:"))
     st.code(" ".join(cmd), language="bash")
-    st.info(f"Config JSON usata: {cfg_path}")
+    st.info(f"{tr(lang, 'cfg_used', 'Config JSON usata')}: {cfg_path}")
 
     if run_now_bg:
         existing_proc = st.session_state.get("async_proc")
@@ -885,18 +1155,24 @@ def main() -> None:
             "output_hint": str(cfg_obj.output),
             "cmd": " ".join(cmd),
         }
-        st.success(f"Job avviato in background (PID {proc.pid}). Apri il pannello 'Job in background' per monitorarlo.")
+        st.success(
+            f"Job avviato in background (PID {proc.pid}). "
+            f"Apri il pannello '{tr(lang, 'bg_job', 'Job in background')}' per monitorarlo."
+        )
         return
 
+    progress_widget = st.progress(0.0, text="Render rows: 0/0 (0.0%)")
     log_placeholder = st.empty()
-    rc, log_text = _run_command_live(cmd, workspace_path, log_placeholder)
+    rc, log_text = _run_command_live(cmd, workspace_path, log_placeholder, progress_widget)
     log_path = run_dir / f"run_{stamp}.log"
     log_path.write_text(log_text, encoding="utf-8")
 
     if rc == 0:
-        st.success(f"Simulazione completata. Log: {log_path}")
+        progress_widget.progress(1.0, text="Render rows: completed (100.0%)")
+        st.success(f"{tr(lang, 'sim_completed', 'Simulazione completata. Log')}: {log_path}")
     else:
-        st.error(f"Simulazione fallita (exit={rc}). Log: {log_path}")
+        progress_widget.empty()
+        st.error(f"{tr(lang, 'sim_failed', 'Simulazione fallita')} (exit={rc}). Log: {log_path}")
         return
 
     out_file = _resolve_output_file(
@@ -905,7 +1181,7 @@ def main() -> None:
         out_hint=Path(cfg_obj.output),
     )
     if out_file is None or (not out_file.exists()):
-        st.warning(f"Output non trovato automaticamente. Atteso: {Path(cfg_obj.output)}")
+        st.warning(f"{tr(lang, 'output_not_found_expected', 'Output non trovato automaticamente. Atteso')}: {Path(cfg_obj.output)}")
         return
 
     st.session_state["last_output_path"] = str(out_file)

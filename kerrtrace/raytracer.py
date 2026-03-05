@@ -17,6 +17,10 @@ try:
     import click
 except Exception:
     click = None
+try:
+    from tqdm.auto import tqdm as tqdm_auto
+except Exception:
+    tqdm_auto = None
 
 from .config import RenderConfig
 from .geometry import (
@@ -4088,6 +4092,18 @@ class KerrRayTracer:
             return "█", "░"
         return "#", "-"
 
+    def _resolve_progress_backend(self) -> str:
+        backend = str(getattr(self.config, "progress_backend", "manual")).lower()
+        if backend == "auto":
+            if tqdm_auto is not None and sys.stdout.isatty():
+                return "tqdm"
+            return "manual"
+        if backend == "tqdm" and tqdm_auto is None:
+            if sys.stdout.isatty():
+                print("tqdm backend requested but tqdm is not installed; falling back to manual progress.", flush=True)
+            return "manual"
+        return backend
+
     @torch.inference_mode()
     def render(
         self,
@@ -4130,9 +4146,11 @@ class KerrRayTracer:
             tile_rows = h
         use_tiling = tile_rows < h
         progress_enabled = bool(self.config.show_progress_bar and threading.current_thread() is threading.main_thread())
+        progress_backend = self._resolve_progress_backend() if progress_enabled else "manual"
+        use_tqdm_progress = bool(progress_enabled and progress_backend == "tqdm" and tqdm_auto is not None)
+        use_manual_progress = bool(progress_enabled and not use_tqdm_progress)
         progress_start = time.perf_counter()
         rows_done = 0
-        # Keep a manual progress renderer so ETA can tick every second between row updates.
         use_click_progress = False
         progress_print_lock = threading.Lock()
         progress_state_lock = threading.Lock()
@@ -4159,7 +4177,7 @@ class KerrRayTracer:
 
         def _eta_ticker() -> None:
             while not progress_stop.wait(1.0):
-                if not progress_enabled:
+                if not use_manual_progress:
                     continue
                 with progress_state_lock:
                     rows_now = rows_done
@@ -4171,7 +4189,7 @@ class KerrRayTracer:
                 _emit_progress(rows_now=rows_now, eta_now=eta_live, finalize_now=False)
 
         ticker_thread: threading.Thread | None = None
-        if progress_enabled:
+        if use_manual_progress:
             eta_base_seconds, eta_base_time = _recompute_eta(progress_start, rows_done)
             _emit_progress(rows_now=0, eta_now=eta_base_seconds, finalize_now=False)
             ticker_thread = threading.Thread(target=_eta_ticker, name="kerrtrace-progress-eta", daemon=True)
@@ -4295,7 +4313,18 @@ class KerrRayTracer:
                 finally:
                     self.config = cfg_render_base
 
-        if use_click_progress:
+        if use_tqdm_progress:
+            progress_ctx = tqdm_auto(
+                total=h,
+                desc="Render rows",
+                unit="row",
+                smoothing=0.3,
+                mininterval=0.1,
+                dynamic_ncols=True,
+                leave=True,
+                disable=not sys.stdout.isatty(),
+            )
+        elif use_click_progress:
             fill_char, empty_char = self._progress_bar_chars()
             progress_ctx = click.progressbar(
                 length=h,
@@ -4346,7 +4375,7 @@ class KerrRayTracer:
                     rows_done += (row_end - row_start)
                     if progress_bar is not None:
                         progress_bar.update(row_end - row_start)
-                    elif progress_enabled:
+                    elif use_manual_progress:
                         now_ts = time.perf_counter()
                         with progress_state_lock:
                             eta_base_seconds, eta_base_time = _recompute_eta(now_ts, rows_done)

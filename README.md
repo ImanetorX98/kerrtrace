@@ -191,6 +191,12 @@ Mantieni anche i frame PNG:
 python -m kerrtrace --config example_config.json --animate --frames 60 --fps 24 --output out/shot.mp4 --keep-frames --frames-dir out/shot_frames
 ```
 
+Usa la progress bar `tqdm` in terminale (invece della barra manuale):
+
+```bash
+python -m kerrtrace --config example_config.json --progress-backend tqdm --enable-progress-bar --output out/render_tqdm.png
+```
+
 Diagnostica device (utile su Mac per MPS):
 
 ```bash
@@ -252,6 +258,7 @@ Setup rapido ambiente MPS (Python 3.11):
 - `disk_outer_radius`: raggio esterno del disco.
 - `inner_edge_boost`, `outer_edge_boost`: luminosita' extra sui bordi interno/esterno del disco.
 - `step_size`, `max_steps`: controllo accuratezza/costo integrazione.
+- `progress_backend`: backend barra avanzamento (`manual`, `tqdm`, `auto`).
 - `adaptive_integrator`: usa integrazione RK45 adattiva (default `true`).
 - `adaptive_rtol`, `adaptive_atol`: tolleranze relative/assolute del controllo errore locale.
 - `adaptive_step_min`, `adaptive_step_max`: limiti del passo adattivo.
