@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 import math
 import numpy as np
 from pathlib import Path
+import queue
 import shutil
 import subprocess
 import tempfile
@@ -667,6 +668,8 @@ def render_animation(
     adaptive_frame_steps: bool = True,
     adaptive_frame_steps_min_scale: float = 0.60,
     stream_encode: bool = True,
+    stream_encode_async: bool = True,
+    stream_encode_queue_size: int = 4,
 ) -> AnimationStats:
     cfg = base_config.validated()
     target = Path(output_path)
@@ -701,6 +704,8 @@ def render_animation(
         raise ValueError("render_frames=False requires frames_dir")
     if adaptive_frame_steps_min_scale <= 0.0 or adaptive_frame_steps_min_scale > 1.0:
         raise ValueError("adaptive_frame_steps_min_scale must be in (0, 1]")
+    if stream_encode_queue_size < 1 or stream_encode_queue_size > 64:
+        raise ValueError("stream_encode_queue_size must be in [1, 64]")
 
     t0 = time.perf_counter()
 
@@ -737,6 +742,31 @@ def render_animation(
             old_frame.unlink()
 
     stream_proc: subprocess.Popen[bytes] | None = None
+    stream_q: queue.Queue[np.ndarray | None] | None = None
+    stream_writer: threading.Thread | None = None
+    stream_errors: list[Exception] = []
+
+    def _start_async_stream_writer(proc: subprocess.Popen[bytes], qsize: int) -> tuple[queue.Queue[np.ndarray | None], threading.Thread]:
+        if proc.stdin is None:
+            raise RuntimeError("ffmpeg stream process has no stdin pipe")
+        q: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=max(1, int(qsize)))
+
+        def _writer_loop() -> None:
+            try:
+                while True:
+                    item = q.get()
+                    try:
+                        if item is None:
+                            break
+                        proc.stdin.write(item.astype(np.uint8, copy=False).tobytes())
+                    finally:
+                        q.task_done()
+            except Exception as exc:
+                stream_errors.append(exc)
+
+        thread = threading.Thread(target=_writer_loop, name="kerrtrace-ffmpeg-writer", daemon=True)
+        thread.start()
+        return q, thread
 
     try:
         resolved = cfg.resolve_device()
@@ -749,10 +779,21 @@ def render_animation(
                 width=int(cfg.width),
                 height=int(cfg.height),
             )
+            if stream_encode_async:
+                stream_q, stream_writer = _start_async_stream_writer(
+                    proc=stream_proc,
+                    qsize=stream_encode_queue_size,
+                )
 
-            def _stream_sink(_: int, frame_u8: np.ndarray) -> None:
-                assert stream_proc is not None and stream_proc.stdin is not None
-                stream_proc.stdin.write(frame_u8.astype(np.uint8, copy=False).tobytes())
+                def _stream_sink(_: int, frame_u8: np.ndarray) -> None:
+                    if stream_errors:
+                        raise RuntimeError(f"Async ffmpeg writer failed: {stream_errors[-1]}")
+                    assert stream_q is not None
+                    stream_q.put(frame_u8.astype(np.uint8, copy=False))
+            else:
+                def _stream_sink(_: int, frame_u8: np.ndarray) -> None:
+                    assert stream_proc is not None and stream_proc.stdin is not None
+                    stream_proc.stdin.write(frame_u8.astype(np.uint8, copy=False).tobytes())
 
             frame_sink = _stream_sink
         else:
@@ -786,6 +827,13 @@ def render_animation(
             )
 
         if allow_stream and stream_proc is not None:
+            if stream_q is not None:
+                stream_q.put(None)
+                stream_q.join()
+                if stream_writer is not None:
+                    stream_writer.join(timeout=2.0)
+                if stream_errors:
+                    raise RuntimeError(f"Async ffmpeg writer failed: {stream_errors[-1]}")
             _close_video_ffmpeg_stream(stream_proc)
             stream_proc = None
 
@@ -806,6 +854,13 @@ def render_animation(
             else:
                 raise ValueError("Unsupported animation output extension. Use .mp4, .mov, .mkv, or .gif")
     finally:
+        if stream_q is not None:
+            try:
+                stream_q.put_nowait(None)
+            except Exception:
+                pass
+            if stream_writer is not None:
+                stream_writer.join(timeout=1.0)
         if stream_proc is not None:
             try:
                 _close_video_ffmpeg_stream(stream_proc)

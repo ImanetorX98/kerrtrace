@@ -188,6 +188,79 @@ class Starship:
             color_rgb=color_rgb,
         )
 
+    def to_composite_emitters(
+        self,
+        model_scale: float = 1.0,
+        intensity: float = 1.1,
+        color_rgb: tuple[float, float, float] = (0.84, 0.88, 0.95),
+    ) -> list[PointEmitter]:
+        """
+        Build a simple spaceship silhouette as a union of small emitters.
+        The layout is expressed in local (r, theta, phi) offsets around the ship state.
+        """
+        base = self.to_point_emitter(
+            radius=0.10 * model_scale,
+            intensity=intensity,
+            color_rgb=color_rgb,
+        )
+        if base is None:
+            return []
+
+        r0 = max(1.0e-4, float(base.r))
+        th0 = float(base.theta)
+        ph0 = float(base.phi)
+        sin_th = max(1.0e-4, abs(math.sin(th0)))
+
+        # Local conversion: length scale -> angular offsets.
+        dphi = (0.32 * model_scale) / (r0 * sin_th)
+        dtheta = (0.18 * model_scale) / r0
+        dr = 0.14 * model_scale
+
+        # (dr, dtheta, dphi, radius_scale) - dense overlap to avoid "bubble" look.
+        components: list[tuple[float, float, float, float]] = []
+        # Fuselage spine.
+        for i in range(-6, 7):
+            s = i / 6.0
+            rad = max(0.56, 1.22 - 0.55 * abs(s))
+            components.append((0.05 * dr, 0.0, 1.45 * s * dphi, rad))
+        # Upper/lower wings.
+        for i in range(-5, 6):
+            s = i / 5.0
+            lat = 1.20 * s * dphi
+            wing_h = (0.70 + 0.30 * (1.0 - abs(s))) * dtheta
+            wing_rad = max(0.34, 0.54 - 0.12 * abs(s))
+            components.append((-0.12 * dr, +wing_h, lat, wing_rad))
+            components.append((-0.12 * dr, -wing_h, lat, wing_rad))
+        # Nose and engine pods.
+        components.extend(
+            [
+                (0.16 * dr, 0.00, 0.0, 0.92),
+                (-0.34 * dr, 0.00, +1.58 * dphi, 0.62),
+                (-0.34 * dr, 0.00, -1.58 * dphi, 0.62),
+            ]
+        )
+
+        out: list[PointEmitter] = []
+        base_radius = max(0.02, float(base.radius))
+        for dr_i, dth_i, dph_i, rs in components:
+            th = min(math.pi - 2.0e-3, max(2.0e-3, th0 + dth_i))
+            ph = (ph0 + dph_i) % (2.0 * math.pi)
+            out.append(
+                PointEmitter(
+                    r=max(1.0e-4, r0 + dr_i),
+                    theta=th,
+                    phi=ph,
+                    u_t=base.u_t,
+                    u_r=base.u_r,
+                    u_theta=base.u_theta,
+                    u_phi=base.u_phi,
+                    radius=base_radius * rs,
+                    intensity=float(base.intensity),
+                    color_rgb=base.color_rgb,
+                )
+            )
+        return out
+
     def _active_command(self, t: float) -> StarshipThrustCommand:
         if self._program_idx >= len(self._program):
             return self._manual_command

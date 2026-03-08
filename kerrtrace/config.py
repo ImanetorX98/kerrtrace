@@ -107,13 +107,22 @@ class RenderConfig:
     video_crf: int = 18
     render_tile_rows: int = 0
     camera_fastpath: bool = True
+    cuda_graph_finalize: bool = True
     adaptive_spatial_sampling: bool = False
     adaptive_spatial_preview_steps: int = 96
     adaptive_spatial_min_scale: float = 0.65
     adaptive_spatial_quantile: float = 0.78
+    roi_supersampling: bool = False
+    roi_supersample_threshold: float = 0.92
+    roi_supersample_jitter: float = 0.35
+    roi_supersample_samples: int = 2
+    persistent_cache_enabled: bool = True
+    persistent_cache_dir: str = "out/cache"
     show_progress_bar: bool = True
     progress_backend: str = "manual"
     animation_workers: int = 1
+    stream_encode_async: bool = True
+    stream_encode_queue_size: int = 4
     quality_lock: bool = False
     quality_lock_psnr_min: float = 45.0
     quality_lock_ssim_min: float = 0.985
@@ -306,16 +315,26 @@ class RenderConfig:
             raise ValueError("kerr_schild_null_norm_tol must be positive")
         if cfg.render_tile_rows < 0:
             raise ValueError("render_tile_rows must be >= 0")
+        if cfg.roi_supersample_threshold < 0.50 or cfg.roi_supersample_threshold > 0.999:
+            raise ValueError("roi_supersample_threshold must be in [0.50, 0.999]")
+        if cfg.roi_supersample_jitter <= 0.0 or cfg.roi_supersample_jitter > 1.0:
+            raise ValueError("roi_supersample_jitter must be in (0, 1]")
+        if cfg.roi_supersample_samples < 1 or cfg.roi_supersample_samples > 8:
+            raise ValueError("roi_supersample_samples must be in [1, 8]")
         if cfg.adaptive_spatial_preview_steps < 16 or cfg.adaptive_spatial_preview_steps > 10000:
             raise ValueError("adaptive_spatial_preview_steps must be in [16, 10000]")
         if cfg.adaptive_spatial_min_scale <= 0.0 or cfg.adaptive_spatial_min_scale > 1.0:
             raise ValueError("adaptive_spatial_min_scale must be in (0, 1]")
         if cfg.adaptive_spatial_quantile < 0.50 or cfg.adaptive_spatial_quantile > 0.995:
             raise ValueError("adaptive_spatial_quantile must be in [0.50, 0.995]")
+        if not cfg.persistent_cache_dir:
+            raise ValueError("persistent_cache_dir cannot be empty")
         if cfg.progress_backend not in {"manual", "tqdm", "auto"}:
             raise ValueError("progress_backend must be 'manual', 'tqdm', or 'auto'")
         if cfg.animation_workers < 1 or cfg.animation_workers > 64:
             raise ValueError("animation_workers must be in [1, 64]")
+        if cfg.stream_encode_queue_size < 1 or cfg.stream_encode_queue_size > 64:
+            raise ValueError("stream_encode_queue_size must be in [1, 64]")
         if cfg.quality_lock_psnr_min <= 0.0:
             raise ValueError("quality_lock_psnr_min must be > 0")
         if not (0.0 < cfg.quality_lock_ssim_min <= 1.0):

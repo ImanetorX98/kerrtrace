@@ -67,21 +67,72 @@ MEDIA_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
 LANGUAGE_OPTIONS: dict[str, str] = {
     "it": "Italiano",
     "en": "English",
-    "es": "Español",
-    "ro": "Română",
-    "ru": "Русский",
-    "zh": "中文(简体)",
-    "fr": "Français",
     "de": "Deutsch",
-    "pt": "Português",
+    "ro": "Română",
+    "zh": "中文(简体)",
 }
 
 I18N: dict[str, dict[str, str]] = {
+    "it": {
+        "page_title": "KerrTrace WebUI",
+        "title": "KerrTrace WebUI",
+        "author_label": "Autore",
+        "intro_caption": "Questa interfaccia genera un JSON RenderConfig e lancia `python -m kerrtrace --config ...`.",
+        "result": "Risultato",
+        "last_output": "Anteprima ultimo output",
+        "manual_open": "Apri file manuale",
+        "manual_path": "Percorso file (assoluto o relativo al workspace)",
+        "open_file": "Apri file",
+        "use_last_output": "Usa ultimo output",
+        "clear": "Pulisci",
+        "empty_path": "Inserisci un percorso file.",
+        "missing_file": "File non trovato:",
+        "unsupported_file": "Estensione non supportata per preview:",
+        "unsupported_upload": "Estensione file caricato non supportata per preview.",
+        "upload_read_error": "Impossibile leggere il file caricato.",
+        "resolved_file": "File risolto:",
+        "browse_local_file": "Sfoglia file dal computer",
+        "local_file_selected": "File locale selezionato",
+        "local_picker_hint": "Questa opzione apre il selettore file del browser per scegliere un file locale.",
+        "run_header": "Run",
+        "language_label": "Lingua",
+        "workspace_label": "Workspace",
+        "require_gpu": "Richiedi GPU (--require-gpu)",
+        "upload_json": "Carica config JSON",
+        "json_not_object": "Il JSON caricato non è un oggetto.",
+        "json_invalid": "JSON non valido:",
+        "mode_header": "Modalità",
+        "mode_label": "Tipo simulazione",
+        "mode_single_frame": "Frame singolo",
+        "mode_video": "Video",
+        "mode_starship_frame": "Frame astronave",
+        "mode_starship_video": "Video astronave",
+        "quality_header": "Qualità / Risoluzione",
+        "quality_preset": "Preset qualità",
+        "resolution_set": "Risoluzione impostata a",
+        "run_live": "Lancia simulazione (live)",
+        "run_bg": "Lancia in background",
+        "bg_job": "Job in background",
+        "job_running": "In esecuzione",
+        "job_completed": "Job completato",
+        "job_failed": "Job terminato con errore",
+        "refresh_monitor": "Aggiorna monitor",
+        "stop_job": "Interrompi job",
+        "clear_job": "Pulisci stato job",
+        "output_not_found_auto": "Output non trovato automaticamente. Controlla il path nel log.",
+        "cmd_launched": "Comando lanciato:",
+        "cfg_used": "Config JSON usata:",
+        "log_label": "Log",
+        "sim_completed": "Simulazione completata. Log:",
+        "sim_failed": "Simulazione fallita",
+        "output_not_found_expected": "Output non trovato automaticamente. Atteso:",
+    },
     "en": {
         "page_title": "KerrTrace WebUI",
         "title": "KerrTrace WebUI",
         "author_label": "Author",
         "intro_caption": "This interface creates a RenderConfig JSON and runs `python -m kerrtrace --config ...`.",
+        "result": "Result",
         "last_output": "Last output preview",
         "manual_open": "Open file manually",
         "manual_path": "File path (absolute or relative to workspace)",
@@ -91,7 +142,12 @@ I18N: dict[str, dict[str, str]] = {
         "empty_path": "Enter a file path.",
         "missing_file": "File not found:",
         "unsupported_file": "Unsupported file extension for preview:",
+        "unsupported_upload": "Unsupported uploaded file extension for preview.",
+        "upload_read_error": "Cannot read uploaded file.",
         "resolved_file": "Resolved file:",
+        "browse_local_file": "Browse file from your computer",
+        "local_file_selected": "Selected local file",
+        "local_picker_hint": "This opens the browser file picker so you can choose a local media file.",
         "run_header": "Run",
         "language_label": "Language",
         "workspace_label": "Workspace",
@@ -103,6 +159,8 @@ I18N: dict[str, dict[str, str]] = {
         "mode_label": "Simulation type",
         "mode_single_frame": "Single Frame",
         "mode_video": "Video",
+        "mode_starship_frame": "Starship Frame",
+        "mode_starship_video": "Starship Video",
         "quality_header": "Quality / Resolution",
         "quality_preset": "Quality preset",
         "resolution_set": "Resolution set to",
@@ -118,6 +176,7 @@ I18N: dict[str, dict[str, str]] = {
         "output_not_found_auto": "Output not found automatically. Check the path in the log.",
         "cmd_launched": "Command launched:",
         "cfg_used": "Config JSON used:",
+        "log_label": "Log",
         "sim_completed": "Simulation completed. Log:",
         "sim_failed": "Simulation failed",
         "output_not_found_expected": "Output not found automatically. Expected:",
@@ -153,20 +212,58 @@ I18N: dict[str, dict[str, str]] = {
         "run_bg": "Lanzar en segundo plano",
     },
     "ro": {
+        "page_title": "KerrTrace WebUI",
+        "title": "KerrTrace WebUI",
         "author_label": "Autor",
+        "intro_caption": "Această interfață generează un JSON RenderConfig și rulează `python -m kerrtrace --config ...`.",
+        "result": "Rezultat",
+        "last_output": "Previzualizare ultimului output",
         "manual_open": "Deschide fișier manual",
         "manual_path": "Cale fișier (absolută sau relativă la workspace)",
         "open_file": "Deschide fișier",
         "use_last_output": "Folosește ultimul output",
-        "clear": "Șterge",
+        "clear": "Curăță",
+        "empty_path": "Introdu o cale către fișier.",
+        "missing_file": "Fișier negăsit:",
+        "unsupported_file": "Extensie de fișier nesuportată pentru previzualizare:",
+        "unsupported_upload": "Extensie nesuportată pentru fișierul încărcat.",
+        "upload_read_error": "Nu se poate citi fișierul încărcat.",
+        "resolved_file": "Fișier rezolvat:",
+        "browse_local_file": "Alege fișier de pe calculator",
+        "local_file_selected": "Fișier local selectat",
+        "local_picker_hint": "Aceasta deschide selectorul de fișiere din browser pentru a alege un fișier media local.",
         "run_header": "Rulare",
         "language_label": "Limbă",
+        "workspace_label": "Workspace",
+        "require_gpu": "Necesită GPU (--require-gpu)",
+        "upload_json": "Încarcă configurație JSON",
+        "json_not_object": "JSON-ul încărcat nu este un obiect.",
+        "json_invalid": "JSON invalid:",
         "mode_header": "Mod",
         "mode_label": "Tip simulare",
         "mode_single_frame": "Cadru unic",
         "mode_video": "Video",
+        "mode_starship_frame": "Cadru navă spațială",
+        "mode_starship_video": "Video navă spațială",
+        "quality_header": "Calitate / Rezoluție",
+        "quality_preset": "Preset calitate",
+        "resolution_set": "Rezoluție setată la",
         "run_live": "Rulează simularea (live)",
         "run_bg": "Rulează în fundal",
+        "bg_job": "Job în fundal",
+        "job_running": "În execuție",
+        "job_completed": "Job finalizat",
+        "job_failed": "Job eșuat",
+        "refresh_monitor": "Actualizează monitorizarea",
+        "stop_job": "Oprește jobul",
+        "clear_job": "Șterge starea jobului",
+        "output_not_found_auto": "Output-ul nu a fost găsit automat. Verifică calea din log.",
+        "cmd_launched": "Comandă lansată:",
+        "cfg_used": "Config JSON folosit:",
+        "log_label": "Log",
+        "sim_completed": "Simulare finalizată. Log:",
+        "sim_failed": "Simulare eșuată",
+        "output_not_found_expected": "Output-ul nu a fost găsit automat. Așteptat:",
     },
     "ru": {
         "author_label": "Автор",
@@ -185,20 +282,58 @@ I18N: dict[str, dict[str, str]] = {
         "run_bg": "Запустить в фоне",
     },
     "zh": {
+        "page_title": "KerrTrace WebUI",
+        "title": "KerrTrace WebUI",
         "author_label": "作者",
+        "intro_caption": "此界面会生成 RenderConfig JSON，并运行 `python -m kerrtrace --config ...`。",
+        "result": "结果",
+        "last_output": "上次输出预览",
         "manual_open": "手动打开文件",
         "manual_path": "文件路径（绝对路径或相对 workspace）",
         "open_file": "打开文件",
-        "use_last_output": "使用最近输出",
+        "use_last_output": "使用上次输出",
         "clear": "清除",
+        "empty_path": "请输入文件路径。",
+        "missing_file": "未找到文件：",
+        "unsupported_file": "该扩展名不支持预览：",
+        "unsupported_upload": "上传文件扩展名不支持预览。",
+        "upload_read_error": "无法读取上传文件。",
+        "resolved_file": "解析后的文件：",
+        "browse_local_file": "从电脑选择文件",
+        "local_file_selected": "已选择本地文件",
+        "local_picker_hint": "这会打开浏览器文件选择器，以便选择本地媒体文件。",
         "run_header": "运行",
         "language_label": "语言",
+        "workspace_label": "工作目录",
+        "require_gpu": "强制使用 GPU (--require-gpu)",
+        "upload_json": "上传 JSON 配置",
+        "json_not_object": "上传的 JSON 不是对象。",
+        "json_invalid": "无效 JSON：",
         "mode_header": "模式",
         "mode_label": "模拟类型",
         "mode_single_frame": "单帧",
         "mode_video": "视频",
-        "run_live": "实时运行模拟",
+        "mode_starship_frame": "飞船单帧",
+        "mode_starship_video": "飞船视频",
+        "quality_header": "质量 / 分辨率",
+        "quality_preset": "质量预设",
+        "resolution_set": "分辨率已设置为",
+        "run_live": "启动模拟（实时）",
         "run_bg": "后台运行",
+        "bg_job": "后台任务",
+        "job_running": "运行中",
+        "job_completed": "任务已完成",
+        "job_failed": "任务失败",
+        "refresh_monitor": "刷新监控",
+        "stop_job": "停止任务",
+        "clear_job": "清除任务状态",
+        "output_not_found_auto": "无法自动找到输出。请检查日志中的路径。",
+        "cmd_launched": "已启动命令：",
+        "cfg_used": "使用的配置 JSON：",
+        "log_label": "日志",
+        "sim_completed": "模拟完成。日志：",
+        "sim_failed": "模拟失败",
+        "output_not_found_expected": "无法自动找到输出。期望路径：",
     },
     "fr": {
         "author_label": "Auteur",
@@ -206,9 +341,58 @@ I18N: dict[str, dict[str, str]] = {
         "manual_open": "Ouvrir un fichier manuellement",
     },
     "de": {
+        "page_title": "KerrTrace WebUI",
+        "title": "KerrTrace WebUI",
         "author_label": "Autor",
+        "intro_caption": "Diese Oberfläche erzeugt eine RenderConfig-JSON und führt `python -m kerrtrace --config ...` aus.",
+        "result": "Ergebnis",
+        "last_output": "Vorschau der letzten Ausgabe",
         "language_label": "Sprache",
         "manual_open": "Datei manuell öffnen",
+        "manual_path": "Dateipfad (absolut oder relativ zum Workspace)",
+        "open_file": "Datei öffnen",
+        "use_last_output": "Letzte Ausgabe verwenden",
+        "clear": "Leeren",
+        "empty_path": "Bitte einen Dateipfad eingeben.",
+        "missing_file": "Datei nicht gefunden:",
+        "unsupported_file": "Nicht unterstützte Dateiendung für Vorschau:",
+        "unsupported_upload": "Nicht unterstützte Dateiendung der hochgeladenen Datei.",
+        "upload_read_error": "Hochgeladene Datei kann nicht gelesen werden.",
+        "resolved_file": "Aufgelöste Datei:",
+        "browse_local_file": "Datei vom Computer auswählen",
+        "local_file_selected": "Ausgewählte lokale Datei",
+        "local_picker_hint": "Öffnet den Datei-Dialog des Browsers, um eine lokale Mediendatei auszuwählen.",
+        "run_header": "Ausführung",
+        "workspace_label": "Workspace",
+        "require_gpu": "GPU erzwingen (--require-gpu)",
+        "upload_json": "JSON-Konfiguration hochladen",
+        "json_not_object": "Die hochgeladene JSON ist kein Objekt.",
+        "json_invalid": "Ungültige JSON:",
+        "mode_header": "Modus",
+        "mode_label": "Simulationstyp",
+        "mode_single_frame": "Einzelbild",
+        "mode_video": "Video",
+        "mode_starship_frame": "Raumschiff-Frame",
+        "mode_starship_video": "Raumschiff-Video",
+        "quality_header": "Qualität / Auflösung",
+        "quality_preset": "Qualitäts-Preset",
+        "resolution_set": "Auflösung gesetzt auf",
+        "run_live": "Simulation starten (live)",
+        "run_bg": "Im Hintergrund starten",
+        "bg_job": "Hintergrund-Job",
+        "job_running": "Läuft",
+        "job_completed": "Job abgeschlossen",
+        "job_failed": "Job fehlgeschlagen",
+        "refresh_monitor": "Monitoring aktualisieren",
+        "stop_job": "Job stoppen",
+        "clear_job": "Job-Status löschen",
+        "output_not_found_auto": "Ausgabe konnte nicht automatisch gefunden werden. Prüfe den Pfad im Log.",
+        "cmd_launched": "Gestarteter Befehl:",
+        "cfg_used": "Verwendete Config-JSON:",
+        "log_label": "Log",
+        "sim_completed": "Simulation abgeschlossen. Log:",
+        "sim_failed": "Simulation fehlgeschlagen",
+        "output_not_found_expected": "Ausgabe konnte nicht automatisch gefunden werden. Erwartet:",
     },
     "pt": {
         "author_label": "Autor",
@@ -217,9 +401,512 @@ I18N: dict[str, dict[str, str]] = {
     },
 }
 
+FIELD_I18N: dict[str, dict[str, str]] = {
+    "it": {
+        "Python executable": "Eseguibile Python",
+        "Width": "Larghezza",
+        "Height": "Altezza",
+        "Output file": "File di output",
+        "FOV (deg)": "FOV (gradi)",
+        "Coordinate system": "Sistema di coordinate",
+        "Metric model": "Modello metrico",
+        "Spin a": "Spin a",
+        "Charge Q": "Carica Q",
+        "Lambda": "Lambda",
+        "Observer radius": "Raggio osservatore",
+        "Observer inclination (deg)": "Inclinazione osservatore (gradi)",
+        "Observer azimuth (deg)": "Azimut osservatore (gradi)",
+        "Observer roll (deg)": "Roll osservatore (gradi)",
+        "Disk model": "Modello del disco",
+        "Disk radial profile": "Profilo radiale del disco",
+        "Disk outer radius": "Raggio esterno del disco",
+        "Disk & Rendering": "Disco e rendering",
+        "Performance profile": "Profilo performance",
+        "Manual": "Manuale",
+        "GPU Balanced (Recommended)": "GPU bilanciato (Consigliato)",
+        "Fast Preview": "Anteprima veloce",
+        "High Fidelity": "Alta fedelta'",
+        "r_in = default (ISCO)": "r_in = default (ISCO)",
+        "Disk inner radius": "Raggio interno del disco",
+        "Disk emission gain": "Guadagno emissione disco",
+        "Max steps": "Max step",
+        "Step size": "Dimensione step",
+        "Adaptive integrator": "Integratore adattivo",
+        "Device": "Dispositivo",
+        "Dtype": "Dtype",
+        "Show progress bar": "Mostra barra di avanzamento",
+        "Progress backend": "Backend progress bar",
+        "manual: custom bar; tqdm: tqdm bar; auto: use tqdm when available": "manual: barra custom; tqdm: barra tqdm; auto: usa tqdm se disponibile",
+        "MPS optimized kernel": "Kernel MPS ottimizzato",
+        "Compile RHS": "Compila RHS",
+        "Mixed precision": "Precisione mista",
+        "Camera fastpath": "Camera fastpath",
+        "Adaptive spatial sampling": "Campionamento spaziale adattivo",
+        "Adaptive preview steps": "Step preview adattiva",
+        "Adaptive min scale": "Scala minima adattiva",
+        "Adaptive quantile": "Quantile adattivo",
+        "Render tile rows (0=auto)": "Righe tile render (0=auto)",
+        "Postprocess pipeline": "Pipeline postprocess",
+        "Gargantua look strength": "Intensita' look Gargantua",
+        "Background": "Sfondo",
+        "Background mode": "Modalita' sfondo",
+        "Background projection": "Proiezione sfondo",
+        "Enable star background": "Abilita sfondo stellare",
+        "Star density": "Densita' stelle",
+        "Star brightness": "Luminosita' stelle",
+        "HDRI path": "Percorso HDRI",
+        "HDRI exposure": "Esposizione HDRI",
+        "HDRI rotation (deg)": "Rotazione HDRI (gradi)",
+        "Video parameters": "Parametri video",
+        "Starship overlay (OBJ)": "Overlay astronave (OBJ)",
+        "OBJ model path": "Percorso modello OBJ",
+        "Ship radius (M)": "Raggio nave (M)",
+        "Ship theta (deg)": "Theta nave (gradi)",
+        "Ship phi (deg)": "Phi nave (gradi)",
+        "Ship size (M)": "Dimensione nave (M)",
+        "Ship yaw (deg)": "Yaw nave (gradi)",
+        "Ship pitch (deg)": "Pitch nave (gradi)",
+        "Ship roll (deg)": "Roll nave (gradi)",
+        "Ship opacity": "Opacità nave",
+        "Cinematic strength": "Intensità cinematica",
+        "Ship v_phi": "Velocità nave v_phi",
+        "Ship v_theta": "Velocità nave v_theta",
+        "Ship v_r": "Velocità nave v_r",
+        "Ship acceleration": "Accelerazione nave",
+        "Ship direction mode": "Modalità direzione spinta",
+        "Ship dir x": "Direzione nave x",
+        "Ship dir y": "Direzione nave y",
+        "Ship dir z": "Direzione nave z",
+        "Ship thrust program JSON": "Programma spinta nave JSON",
+        "Multi-ship config JSON": "Config multi-astronave JSON",
+        "Starship frames": "Frame astronave",
+        "Starship FPS": "FPS astronave",
+        "Ship integration substeps": "Sotto-step integrazione nave",
+        "Keep starship frames": "Mantieni frame astronave",
+        "Frames": "Frame",
+        "FPS": "FPS",
+        "Azimuth orbits": "Orbite azimutali",
+        "Inclination wobble": "Wobble inclinazione",
+        "Inclination sweep": "Sweep inclinazione",
+        "Inclination start": "Inclinazione iniziale",
+        "Inclination end": "Inclinazione finale",
+        "Radius sweep": "Sweep raggio",
+        "Radius start": "Raggio iniziale",
+        "Radius end": "Raggio finale",
+        "TAA samples": "Campioni TAA",
+        "Shutter fraction": "Frazione otturatore",
+        "Spatial jitter": "Jitter spaziale",
+        "Stream encode": "Encoding in stream",
+        "Adaptive frame steps": "Frame step adattivi",
+        "Advanced JSON override (optional)": "Override JSON avanzato (facoltativo)",
+        "Enter only fields to override, for example: `{\"disk_beaming_strength\": 0.6}`": "Inserisci solo i campi da sovrascrivere, ad esempio: `{\"disk_beaming_strength\": 0.6}`",
+        "JSON patch": "Patch JSON",
+        "Invalid configuration": "Configurazione non valida",
+    },
+    "de": {
+        "Python executable": "Python-Executable",
+        "Width": "Breite",
+        "Height": "Höhe",
+        "Output file": "Ausgabedatei",
+        "FOV (deg)": "FOV (Grad)",
+        "Coordinate system": "Koordinatensystem",
+        "Metric model": "Metrikmodell",
+        "Spin a": "Spin a",
+        "Charge Q": "Ladung Q",
+        "Lambda": "Lambda",
+        "Observer radius": "Beobachterradius",
+        "Observer inclination (deg)": "Beobachterneigung (Grad)",
+        "Observer azimuth (deg)": "Beobachterazimut (Grad)",
+        "Observer roll (deg)": "Beobachter-Rollwinkel (Grad)",
+        "Disk model": "Scheibenmodell",
+        "Disk radial profile": "Radialprofil der Scheibe",
+        "Disk outer radius": "Außenradius der Scheibe",
+        "Disk & Rendering": "Scheibe und Rendering",
+        "Performance profile": "Leistungsprofil",
+        "Manual": "Manuell",
+        "GPU Balanced (Recommended)": "GPU ausgewogen (Empfohlen)",
+        "Fast Preview": "Schnelle Vorschau",
+        "High Fidelity": "Hohe Genauigkeit",
+        "r_in = default (ISCO)": "r_in = Standard (ISCO)",
+        "Disk inner radius": "Innenradius der Scheibe",
+        "Disk emission gain": "Scheiben-Emissionsverstärkung",
+        "Max steps": "Maximale Schritte",
+        "Step size": "Schrittweite",
+        "Adaptive integrator": "Adaptiver Integrator",
+        "Device": "Gerät",
+        "Dtype": "Datentyp",
+        "Show progress bar": "Fortschrittsbalken anzeigen",
+        "Progress backend": "Fortschritts-Backend",
+        "manual: custom bar; tqdm: tqdm bar; auto: use tqdm when available": "manual: eigene Leiste; tqdm: tqdm-Leiste; auto: verwende tqdm wenn verfügbar",
+        "MPS optimized kernel": "MPS-optimierter Kernel",
+        "Compile RHS": "RHS kompilieren",
+        "Mixed precision": "Gemischte Präzision",
+        "Camera fastpath": "Kamera-Fastpath",
+        "Adaptive spatial sampling": "Adaptives räumliches Sampling",
+        "Adaptive preview steps": "Adaptive Vorschau-Schritte",
+        "Adaptive min scale": "Adaptive Mindest-Skalierung",
+        "Adaptive quantile": "Adaptives Quantil",
+        "Render tile rows (0=auto)": "Render-Kachelzeilen (0=auto)",
+        "Postprocess pipeline": "Postprozess-Pipeline",
+        "Gargantua look strength": "Gargantua-Look-Stärke",
+        "Background": "Hintergrund",
+        "Background mode": "Hintergrundmodus",
+        "Background projection": "Hintergrundprojektion",
+        "Enable star background": "Sternhintergrund aktivieren",
+        "Star density": "Sterndichte",
+        "Star brightness": "Sternhelligkeit",
+        "HDRI path": "HDRI-Pfad",
+        "HDRI exposure": "HDRI-Belichtung",
+        "HDRI rotation (deg)": "HDRI-Rotation (Grad)",
+        "Video parameters": "Video-Parameter",
+        "Starship overlay (OBJ)": "Raumschiff-Overlay (OBJ)",
+        "OBJ model path": "OBJ-Modellpfad",
+        "Ship radius (M)": "Schiffsradius (M)",
+        "Ship theta (deg)": "Schiff-Theta (Grad)",
+        "Ship phi (deg)": "Schiff-Phi (Grad)",
+        "Ship size (M)": "Schiffsgröße (M)",
+        "Ship yaw (deg)": "Schiff-Yaw (Grad)",
+        "Ship pitch (deg)": "Schiff-Pitch (Grad)",
+        "Ship roll (deg)": "Schiff-Roll (Grad)",
+        "Ship opacity": "Schiffs-Opazität",
+        "Cinematic strength": "Cinematic-Stärke",
+        "Ship v_phi": "Schiffsgeschwindigkeit v_phi",
+        "Ship v_theta": "Schiffsgeschwindigkeit v_theta",
+        "Ship v_r": "Schiffsgeschwindigkeit v_r",
+        "Ship acceleration": "Schiffsbeschleunigung",
+        "Ship direction mode": "Schubrichtungsmodus",
+        "Ship dir x": "Schiffsrichtung x",
+        "Ship dir y": "Schiffsrichtung y",
+        "Ship dir z": "Schiffsrichtung z",
+        "Ship thrust program JSON": "Schubprogramm JSON",
+        "Multi-ship config JSON": "Multi-Schiff-Konfiguration JSON",
+        "Starship frames": "Raumschiff-Frames",
+        "Starship FPS": "Raumschiff-FPS",
+        "Ship integration substeps": "Schiffsintegrations-Substeps",
+        "Keep starship frames": "Raumschiff-Frames behalten",
+        "Frames": "Frames",
+        "FPS": "FPS",
+        "Azimuth orbits": "Azimut-Orbits",
+        "Inclination wobble": "Neigungs-Wobble",
+        "Inclination sweep": "Neigungs-Sweep",
+        "Inclination start": "Neigungsstart",
+        "Inclination end": "Neigungsende",
+        "Radius sweep": "Radius-Sweep",
+        "Radius start": "Radius-Start",
+        "Radius end": "Radius-Ende",
+        "TAA samples": "TAA-Samples",
+        "Shutter fraction": "Shutter-Anteil",
+        "Spatial jitter": "Räumliches Jitter",
+        "Stream encode": "Stream-Encoding",
+        "Adaptive frame steps": "Adaptive Frame-Schritte",
+        "Advanced JSON override (optional)": "Erweiterte JSON-Überschreibung (optional)",
+        "Enter only fields to override, for example: `{\"disk_beaming_strength\": 0.6}`": "Nur Felder zum Überschreiben eingeben, z. B.: `{\"disk_beaming_strength\": 0.6}`",
+        "JSON patch": "JSON-Patch",
+        "Invalid configuration": "Ungültige Konfiguration",
+    },
+    "es": {
+        "Python executable": "Ejecutable de Python",
+        "Output file": "Archivo de salida",
+        "Coordinate system": "Sistema de coordenadas",
+        "Metric model": "Modelo métrico",
+        "Observer radius": "Radio del observador",
+        "Observer inclination (deg)": "Inclinación del observador (grados)",
+        "Observer azimuth (deg)": "Acimut del observador (grados)",
+        "Observer roll (deg)": "Roll del observador (grados)",
+        "Disk model": "Modelo del disco",
+        "Disk radial profile": "Perfil radial del disco",
+        "Disk outer radius": "Radio exterior del disco",
+        "Disk & Rendering": "Disco y renderizado",
+        "Performance profile": "Perfil de rendimiento",
+        "Manual": "Manual",
+        "GPU Balanced (Recommended)": "GPU equilibrada (Recomendado)",
+        "Fast Preview": "Vista previa rápida",
+        "High Fidelity": "Alta fidelidad",
+        "Disk inner radius": "Radio interior del disco",
+        "Disk emission gain": "Ganancia de emisión del disco",
+        "Max steps": "Pasos máximos",
+        "Step size": "Tamaño de paso",
+        "Adaptive integrator": "Integrador adaptativo",
+        "Show progress bar": "Mostrar barra de progreso",
+        "Background": "Fondo",
+        "Background mode": "Modo de fondo",
+        "Background projection": "Proyección de fondo",
+        "Enable star background": "Activar fondo estelar",
+        "Star density": "Densidad estelar",
+        "Star brightness": "Brillo estelar",
+        "HDRI path": "Ruta HDRI",
+        "HDRI exposure": "Exposición HDRI",
+        "HDRI rotation (deg)": "Rotación HDRI (grados)",
+        "Video parameters": "Parámetros de video",
+        "Advanced JSON override (optional)": "Override JSON avanzado (opcional)",
+        "JSON patch": "Patch JSON",
+        "Invalid configuration": "Configuración no válida",
+    },
+    "fr": {
+        "Python executable": "Exécutable Python",
+        "Output file": "Fichier de sortie",
+        "Coordinate system": "Système de coordonnées",
+        "Metric model": "Modèle métrique",
+        "Observer radius": "Rayon observateur",
+        "Observer inclination (deg)": "Inclinaison observateur (degrés)",
+        "Observer azimuth (deg)": "Azimut observateur (degrés)",
+        "Observer roll (deg)": "Roulis observateur (degrés)",
+        "Disk model": "Modèle de disque",
+        "Disk radial profile": "Profil radial du disque",
+        "Disk outer radius": "Rayon externe du disque",
+        "Disk & Rendering": "Disque et rendu",
+        "Performance profile": "Profil de performance",
+        "Manual": "Manuel",
+        "GPU Balanced (Recommended)": "GPU équilibré (recommandé)",
+        "Fast Preview": "Aperçu rapide",
+        "High Fidelity": "Haute fidélité",
+        "Background": "Arrière-plan",
+        "Video parameters": "Paramètres vidéo",
+        "Advanced JSON override (optional)": "Surcharge JSON avancée (optionnel)",
+        "JSON patch": "Patch JSON",
+        "Invalid configuration": "Configuration invalide",
+    },
+    "pt": {
+        "Python executable": "Executável Python",
+        "Output file": "Ficheiro de saída",
+        "Coordinate system": "Sistema de coordenadas",
+        "Metric model": "Modelo métrico",
+        "Observer radius": "Raio do observador",
+        "Observer inclination (deg)": "Inclinação do observador (graus)",
+        "Observer azimuth (deg)": "Azimute do observador (graus)",
+        "Observer roll (deg)": "Rolagem do observador (graus)",
+        "Disk model": "Modelo do disco",
+        "Disk radial profile": "Perfil radial do disco",
+        "Disk outer radius": "Raio externo do disco",
+        "Disk & Rendering": "Disco e renderização",
+        "Performance profile": "Perfil de desempenho",
+        "Manual": "Manual",
+        "GPU Balanced (Recommended)": "GPU equilibrada (Recomendado)",
+        "Fast Preview": "Pré-visualização rápida",
+        "High Fidelity": "Alta fidelidade",
+        "Background": "Fundo",
+        "Video parameters": "Parâmetros de vídeo",
+        "Advanced JSON override (optional)": "Substituição JSON avançada (opcional)",
+        "JSON patch": "Patch JSON",
+        "Invalid configuration": "Configuração inválida",
+    },
+    "ro": {
+        "Python executable": "Executabil Python",
+        "Width": "Lățime",
+        "Height": "Înălțime",
+        "Output file": "Fișier de ieșire",
+        "FOV (deg)": "FOV (grade)",
+        "Coordinate system": "Sistem de coordonate",
+        "Metric model": "Model metric",
+        "Spin a": "Spin a",
+        "Charge Q": "Sarcină Q",
+        "Lambda": "Lambda",
+        "Observer radius": "Raza observatorului",
+        "Observer inclination (deg)": "Înclinarea observatorului (grade)",
+        "Observer azimuth (deg)": "Azimutul observatorului (grade)",
+        "Observer roll (deg)": "Ruliu observator (grade)",
+        "Disk model": "Model disc",
+        "Disk radial profile": "Profil radial al discului",
+        "Disk outer radius": "Raza externă a discului",
+        "Disk & Rendering": "Disc și randare",
+        "Performance profile": "Profil de performanță",
+        "Manual": "Manual",
+        "GPU Balanced (Recommended)": "GPU echilibrat (Recomandat)",
+        "Fast Preview": "Previzualizare rapidă",
+        "High Fidelity": "Fidelitate înaltă",
+        "r_in = default (ISCO)": "r_in = implicit (ISCO)",
+        "Disk inner radius": "Raza internă a discului",
+        "Disk emission gain": "Amplificare emisie disc",
+        "Max steps": "Pași maximi",
+        "Step size": "Mărime pas",
+        "Adaptive integrator": "Integrator adaptiv",
+        "Device": "Dispozitiv",
+        "Dtype": "Tip date",
+        "Show progress bar": "Afișează bara de progres",
+        "Progress backend": "Backend progres",
+        "manual: custom bar; tqdm: tqdm bar; auto: use tqdm when available": "manual: bară custom; tqdm: bară tqdm; auto: folosește tqdm când este disponibil",
+        "MPS optimized kernel": "Kernel MPS optimizat",
+        "Compile RHS": "Compilează RHS",
+        "Mixed precision": "Precizie mixtă",
+        "Camera fastpath": "Cale rapidă cameră",
+        "Adaptive spatial sampling": "Eșantionare spațială adaptivă",
+        "Adaptive preview steps": "Pași preview adaptivi",
+        "Adaptive min scale": "Scală minimă adaptivă",
+        "Adaptive quantile": "Cuantilă adaptivă",
+        "Render tile rows (0=auto)": "Rânduri tile randare (0=auto)",
+        "Postprocess pipeline": "Pipeline postprocesare",
+        "Gargantua look strength": "Intensitate look Gargantua",
+        "Background": "Fundal",
+        "Background mode": "Mod fundal",
+        "Background projection": "Proiecție fundal",
+        "Enable star background": "Activează fundal stelar",
+        "Star density": "Densitate stele",
+        "Star brightness": "Luminozitate stele",
+        "HDRI path": "Cale HDRI",
+        "HDRI exposure": "Expunere HDRI",
+        "HDRI rotation (deg)": "Rotație HDRI (grade)",
+        "Video parameters": "Parametri video",
+        "Starship overlay (OBJ)": "Overlay navă spațială (OBJ)",
+        "OBJ model path": "Cale model OBJ",
+        "Ship radius (M)": "Raza navei (M)",
+        "Ship theta (deg)": "Theta navă (grade)",
+        "Ship phi (deg)": "Phi navă (grade)",
+        "Ship size (M)": "Dimensiune navă (M)",
+        "Ship yaw (deg)": "Yaw navă (grade)",
+        "Ship pitch (deg)": "Pitch navă (grade)",
+        "Ship roll (deg)": "Roll navă (grade)",
+        "Ship opacity": "Opacitate navă",
+        "Cinematic strength": "Intensitate cinematică",
+        "Ship v_phi": "Viteză navă v_phi",
+        "Ship v_theta": "Viteză navă v_theta",
+        "Ship v_r": "Viteză navă v_r",
+        "Ship acceleration": "Accelerație navă",
+        "Ship direction mode": "Mod direcție propulsie",
+        "Ship dir x": "Direcție navă x",
+        "Ship dir y": "Direcție navă y",
+        "Ship dir z": "Direcție navă z",
+        "Ship thrust program JSON": "Program propulsie navă JSON",
+        "Multi-ship config JSON": "Configurație multi-navă JSON",
+        "Starship frames": "Cadre navă spațială",
+        "Starship FPS": "FPS navă spațială",
+        "Ship integration substeps": "Subpași integrare navă",
+        "Keep starship frames": "Păstrează cadrele navei",
+        "Frames": "Cadre",
+        "FPS": "FPS",
+        "Azimuth orbits": "Orbite azimutale",
+        "Inclination wobble": "Oscilație înclinare",
+        "Inclination sweep": "Sweep înclinare",
+        "Inclination start": "Înclinare inițială",
+        "Inclination end": "Înclinare finală",
+        "Radius sweep": "Sweep rază",
+        "Radius start": "Rază inițială",
+        "Radius end": "Rază finală",
+        "TAA samples": "Eșantioane TAA",
+        "Shutter fraction": "Fracție obturator",
+        "Spatial jitter": "Jitter spațial",
+        "Stream encode": "Encodare stream",
+        "Adaptive frame steps": "Pași de cadru adaptivi",
+        "Advanced JSON override (optional)": "Suprascriere JSON avansată (opțional)",
+        "Enter only fields to override, for example: `{\"disk_beaming_strength\": 0.6}`": "Introdu doar câmpurile de suprascris, de exemplu: `{\"disk_beaming_strength\": 0.6}`",
+        "JSON patch": "Patch JSON",
+        "Invalid configuration": "Configurație invalidă",
+    },
+    "zh": {
+        "Python executable": "Python 可执行文件",
+        "Width": "宽度",
+        "Height": "高度",
+        "Output file": "输出文件",
+        "FOV (deg)": "FOV（度）",
+        "Coordinate system": "坐标系",
+        "Metric model": "度规模型",
+        "Spin a": "自旋 a",
+        "Charge Q": "电荷 Q",
+        "Lambda": "Lambda",
+        "Observer radius": "观察者半径",
+        "Observer inclination (deg)": "观察者倾角（度）",
+        "Observer azimuth (deg)": "观察者方位角（度）",
+        "Observer roll (deg)": "观察者滚转角（度）",
+        "Disk model": "吸积盘模型",
+        "Disk radial profile": "吸积盘径向剖面",
+        "Disk outer radius": "吸积盘外半径",
+        "Disk & Rendering": "吸积盘与渲染",
+        "Performance profile": "性能配置",
+        "Manual": "手动",
+        "GPU Balanced (Recommended)": "GPU 平衡（推荐）",
+        "Fast Preview": "快速预览",
+        "High Fidelity": "高保真",
+        "r_in = default (ISCO)": "r_in = 默认（ISCO）",
+        "Disk inner radius": "吸积盘内半径",
+        "Disk emission gain": "吸积盘发射增益",
+        "Max steps": "最大步数",
+        "Step size": "步长",
+        "Adaptive integrator": "自适应积分器",
+        "Device": "设备",
+        "Dtype": "数据类型",
+        "Show progress bar": "显示进度条",
+        "Progress backend": "进度后端",
+        "manual: custom bar; tqdm: tqdm bar; auto: use tqdm when available": "manual: 自定义进度条；tqdm: tqdm 进度条；auto: 可用时使用 tqdm",
+        "MPS optimized kernel": "MPS 优化内核",
+        "Compile RHS": "编译 RHS",
+        "Mixed precision": "混合精度",
+        "Camera fastpath": "相机快速路径",
+        "Adaptive spatial sampling": "自适应空间采样",
+        "Adaptive preview steps": "自适应预览步数",
+        "Adaptive min scale": "自适应最小缩放",
+        "Adaptive quantile": "自适应分位数",
+        "Render tile rows (0=auto)": "渲染分块行数（0=自动）",
+        "Postprocess pipeline": "后处理流程",
+        "Gargantua look strength": "Gargantua 风格强度",
+        "Background": "背景",
+        "Background mode": "背景模式",
+        "Background projection": "背景投影",
+        "Enable star background": "启用星空背景",
+        "Star density": "恒星密度",
+        "Star brightness": "恒星亮度",
+        "HDRI path": "HDRI 路径",
+        "HDRI exposure": "HDRI 曝光",
+        "HDRI rotation (deg)": "HDRI 旋转（度）",
+        "Video parameters": "视频参数",
+        "Starship overlay (OBJ)": "飞船叠加层 (OBJ)",
+        "OBJ model path": "OBJ 模型路径",
+        "Ship radius (M)": "飞船半径 (M)",
+        "Ship theta (deg)": "飞船 theta（度）",
+        "Ship phi (deg)": "飞船 phi（度）",
+        "Ship size (M)": "飞船尺寸 (M)",
+        "Ship yaw (deg)": "飞船偏航（度）",
+        "Ship pitch (deg)": "飞船俯仰（度）",
+        "Ship roll (deg)": "飞船滚转（度）",
+        "Ship opacity": "飞船不透明度",
+        "Cinematic strength": "电影感强度",
+        "Ship v_phi": "飞船速度 v_phi",
+        "Ship v_theta": "飞船速度 v_theta",
+        "Ship v_r": "飞船速度 v_r",
+        "Ship acceleration": "飞船加速度",
+        "Ship direction mode": "飞船推力方向模式",
+        "Ship dir x": "飞船方向 x",
+        "Ship dir y": "飞船方向 y",
+        "Ship dir z": "飞船方向 z",
+        "Ship thrust program JSON": "飞船推力程序 JSON",
+        "Multi-ship config JSON": "多飞船配置 JSON",
+        "Starship frames": "飞船帧数",
+        "Starship FPS": "飞船 FPS",
+        "Ship integration substeps": "飞船积分子步",
+        "Keep starship frames": "保留飞船帧",
+        "Frames": "帧数",
+        "FPS": "帧率 FPS",
+        "Azimuth orbits": "方位角轨道数",
+        "Inclination wobble": "倾角摆动",
+        "Inclination sweep": "倾角扫掠",
+        "Inclination start": "起始倾角",
+        "Inclination end": "结束倾角",
+        "Radius sweep": "半径扫掠",
+        "Radius start": "起始半径",
+        "Radius end": "结束半径",
+        "TAA samples": "TAA 采样数",
+        "Shutter fraction": "快门比例",
+        "Spatial jitter": "空间抖动",
+        "Stream encode": "流式编码",
+        "Adaptive frame steps": "自适应帧步数",
+        "Advanced JSON override (optional)": "高级 JSON 覆盖（可选）",
+        "Enter only fields to override, for example: `{\"disk_beaming_strength\": 0.6}`": "仅输入要覆盖的字段，例如：`{\"disk_beaming_strength\": 0.6}`",
+        "JSON patch": "JSON 补丁",
+        "Invalid configuration": "配置无效",
+    },
+}
+
 
 def tr(lang: str, key: str, default: str) -> str:
-    return I18N.get(lang, {}).get(key, default)
+    lang_dict = I18N.get(lang, {})
+    if key in lang_dict:
+        return lang_dict[key]
+    en_dict = I18N.get("en", {})
+    if key in en_dict:
+        return en_dict[key]
+    return default
+
+
+def tfield(lang: str, text: str) -> str:
+    return FIELD_I18N.get(lang, {}).get(text, text)
 
 
 def _default_python() -> str:
@@ -227,6 +914,20 @@ def _default_python() -> str:
     if project_python.exists():
         return str(project_python)
     return sys.executable
+
+
+def _default_starship_obj(workspace_path: Path) -> str:
+    candidates = [
+        workspace_path / "assets/models/quaternius_ultimate/omen/Omen.obj",
+        Path("assets/models/quaternius_ultimate/omen/Omen.obj"),
+    ]
+    for cand in candidates:
+        try:
+            if cand.exists():
+                return str(cand.resolve())
+        except Exception:
+            continue
+    return ""
 
 
 def _safe_choice(options: list[str], value: str) -> str:
@@ -357,8 +1058,9 @@ def _parse_patch(patch_text: str) -> dict[str, Any]:
 
 
 def _show_output_media(out_file: Path) -> None:
+    lang = str(st.session_state.get("ui_lang", "it"))
     suffix = out_file.suffix.lower()
-    st.subheader("Risultato")
+    st.subheader(tr(lang, "result", "Result"))
     if suffix in IMAGE_SUFFIXES:
         try:
             st.image(out_file.read_bytes(), caption=str(out_file))
@@ -383,6 +1085,35 @@ def _show_output_media(out_file: Path) -> None:
     st.caption(str(out_file))
 
 
+def _show_uploaded_media(uploaded_file: Any) -> tuple[bool, str]:
+    lang = str(st.session_state.get("ui_lang", "it"))
+    name = str(getattr(uploaded_file, "name", "uploaded"))
+    suffix = Path(name).suffix.lower()
+    if suffix not in MEDIA_SUFFIXES:
+        return False, "unsupported"
+    try:
+        data = uploaded_file.getvalue()
+    except Exception:
+        return False, "read_error"
+
+    st.subheader(tr(lang, "result", "Result"))
+    if suffix in IMAGE_SUFFIXES:
+        st.image(data, caption=name)
+        return True, ""
+    if suffix in VIDEO_SUFFIXES:
+        mime = "video/mp4"
+        if suffix == ".gif":
+            mime = "image/gif"
+        elif suffix == ".mov":
+            mime = "video/quicktime"
+        elif suffix == ".mkv":
+            mime = "video/x-matroska"
+        st.video(data, format=mime)
+        st.caption(name)
+        return True, ""
+    return False, "unsupported"
+
+
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
@@ -396,6 +1127,8 @@ def _extract_output_path_from_log(log_text: str, workspace_path: Path) -> Path |
         re.compile(r"Saved charged-particle animation:\s*(.+)$"),
         re.compile(r"Saved raytraced single-particle animation:\s*(.+)$"),
         re.compile(r"Auto output path:\s*(.+)$"),
+        re.compile(r"SAVED=\s*(.+)$"),
+        re.compile(r"SAVED_PREVIEW=\s*(.+)$"),
     )
     lines = [_strip_ansi(ln).strip() for ln in log_text.splitlines()]
     for line in reversed(lines):
@@ -552,9 +1285,9 @@ def main() -> None:
                 else:
                     st.error(f"{tr(lang, 'job_failed', 'Job terminato con errore')} (exit={rc})")
             if cfg_async:
-                st.caption(f"Config: {cfg_async}")
+                st.caption(f"{tr(lang, 'cfg_used', 'Config JSON usata:')} {cfg_async}")
             if log_path:
-                st.caption(f"Log: {log_path}")
+                st.caption(f"{tr(lang, 'log_label', 'Log')}: {log_path}")
             tail_txt = _tail_text_file(log_path)
             if tail_txt:
                 st.code(tail_txt, language="bash")
@@ -604,7 +1337,7 @@ def main() -> None:
             format_func=lambda code: LANGUAGE_OPTIONS.get(code, code),
         )
         st.session_state["ui_lang"] = lang
-        python_exec = st.text_input("Python executable", value=_default_python())
+        python_exec = st.text_input(tfield(lang, "Python executable"), value=_default_python())
         workspace = st.text_input(tr(lang, "workspace_label", "Workspace"), value=str(Path.cwd()))
         require_gpu = st.checkbox(tr(lang, "require_gpu", "Richiedi GPU (--require-gpu)"), value=True)
         uploaded = st.file_uploader(tr(lang, "upload_json", "Carica config JSON"), type=["json"])
@@ -665,12 +1398,40 @@ def main() -> None:
                 st.error(f"{tr(lang, 'missing_file', 'File non trovato')}: `{manual_input}`")
             elif reason == "unsupported":
                 st.error(f"{tr(lang, 'unsupported_file', 'Estensione non supportata per preview')}: `{manual_input}`")
+        st.divider()
+        st.caption(
+            tr(
+                lang,
+                "local_picker_hint",
+                "Questa opzione apre il selettore file del browser per scegliere un file locale.",
+            )
+        )
+        uploaded_media = st.file_uploader(
+            tr(lang, "browse_local_file", "Sfoglia file dal computer"),
+            type=["png", "jpg", "jpeg", "webp", "mp4", "mov", "mkv", "gif"],
+            key="manual_open_local_picker",
+        )
+        if uploaded_media is not None:
+            st.caption(f"{tr(lang, 'local_file_selected', 'File locale selezionato')}: `{uploaded_media.name}`")
+            ok, reason = _show_uploaded_media(uploaded_media)
+            if ok:
+                st.session_state["manual_open_path"] = str(uploaded_media.name)
+            elif reason == "unsupported":
+                st.error(tr(lang, "unsupported_upload", "Estensione file caricato non supportata per preview."))
+            elif reason == "read_error":
+                st.error(tr(lang, "upload_read_error", "Impossibile leggere il file caricato."))
 
     st.subheader(tr(lang, "mode_header", "Modalità"))
     mode = st.radio(
         tr(lang, "mode_label", "Tipo simulazione"),
-        ["single_frame", "video"],
-        format_func=lambda v: tr(lang, f"mode_{v}", "Single Frame" if v == "single_frame" else "Video"),
+        ["single_frame", "video", "starship_frame", "starship_video"],
+        format_func=lambda v: tr(
+            lang,
+            f"mode_{v}",
+            "Single Frame"
+            if v == "single_frame"
+            else ("Video" if v == "video" else ("Starship Frame" if v == "starship_frame" else "Starship Video")),
+        ),
         horizontal=True,
     )
 
@@ -681,27 +1442,34 @@ def main() -> None:
     default_preset = reverse_quality.get(current_wh, "Custom")
     preset = st.selectbox(tr(lang, "quality_preset", "Preset qualità"), options=preset_labels, index=preset_labels.index(default_preset))
     if preset == "Custom":
-        width = st.number_input("Width", min_value=64, max_value=5000, value=int(cfg_seed["width"]), step=1)
-        height = st.number_input("Height", min_value=64, max_value=5000, value=int(cfg_seed["height"]), step=1)
+        width = st.number_input(tfield(lang, "Width"), min_value=64, max_value=5000, value=int(cfg_seed["width"]), step=1)
+        height = st.number_input(tfield(lang, "Height"), min_value=64, max_value=5000, value=int(cfg_seed["height"]), step=1)
     else:
         width, height = QUALITY_PRESETS[preset]
         st.info(f"{tr(lang, 'resolution_set', 'Risoluzione impostata a')} {width}x{height}")
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        output_default = "out/webui_frame.png" if mode == "single_frame" else "out/webui_video.mp4"
+        if mode == "video":
+            output_default = "out/webui_video.mp4"
+        elif mode == "starship_video":
+            output_default = "out/webui_starship_video.mp4"
+        elif mode == "starship_frame":
+            output_default = "out/webui_starship.png"
+        else:
+            output_default = "out/webui_frame.png"
         output_seed = loaded_cfg.get("output", output_default)
-        output_path = st.text_input("Output file", value=str(output_seed))
-        fov_deg = st.number_input("FOV (deg)", value=float(cfg_seed["fov_deg"]), step=0.1, format="%.3f")
+        output_path = st.text_input(tfield(lang, "Output file"), value=str(output_seed))
+        fov_deg = st.number_input(tfield(lang, "FOV (deg)"), value=float(cfg_seed["fov_deg"]), step=0.1, format="%.3f")
         coordinate_system = st.selectbox(
-            "Coordinate system",
+            tfield(lang, "Coordinate system"),
             options=CHOICE_FIELDS["coordinate_system"],
             index=CHOICE_FIELDS["coordinate_system"].index(
                 _safe_choice(CHOICE_FIELDS["coordinate_system"], str(cfg_seed["coordinate_system"]))
             ),
         )
         metric_model = st.selectbox(
-            "Metric model",
+            tfield(lang, "Metric model"),
             options=CHOICE_FIELDS["metric_model"],
             index=CHOICE_FIELDS["metric_model"].index(
                 _safe_choice(CHOICE_FIELDS["metric_model"], str(cfg_seed["metric_model"]))
@@ -712,7 +1480,7 @@ def main() -> None:
         charge_default = max(-1.0, min(1.0, float(cfg_seed["charge"])))
         theta_default = _clamp(float(cfg_seed["observer_inclination_deg"]), 0.0, 180.0)
         spin = st.number_input(
-            "Spin a",
+            tfield(lang, "Spin a"),
             min_value=-1.0,
             max_value=1.0,
             value=spin_default,
@@ -720,7 +1488,7 @@ def main() -> None:
             format="%.6f",
         )
         charge = st.number_input(
-            "Charge Q",
+            tfield(lang, "Charge Q"),
             min_value=-1.0,
             max_value=1.0,
             value=charge_default,
@@ -728,14 +1496,14 @@ def main() -> None:
             format="%.6f",
         )
         cosmological_constant = st.number_input(
-            "Lambda",
+            tfield(lang, "Lambda"),
             value=float(cfg_seed["cosmological_constant"]),
             step=0.000001,
             format="%.9f",
         )
-        observer_radius = st.number_input("Observer radius", value=float(cfg_seed["observer_radius"]), step=0.5)
+        observer_radius = st.number_input(tfield(lang, "Observer radius"), value=float(cfg_seed["observer_radius"]), step=0.5)
         observer_inclination_deg = st.number_input(
-            "Observer inclination (deg)",
+            tfield(lang, "Observer inclination (deg)"),
             min_value=0.0,
             max_value=180.0,
             value=theta_default,
@@ -744,7 +1512,7 @@ def main() -> None:
     with c3:
         phi_default = _clamp(float(cfg_seed["observer_azimuth_deg"]), 0.0, 360.0)
         observer_azimuth_deg = st.number_input(
-            "Observer azimuth (deg)",
+            tfield(lang, "Observer azimuth (deg)"),
             min_value=0.0,
             max_value=360.0,
             value=phi_default,
@@ -752,106 +1520,110 @@ def main() -> None:
         )
         roll_default = _clamp(float(cfg_seed["observer_roll_deg"]), 0.0, 360.0)
         observer_roll_deg = st.number_input(
-            "Observer roll (deg)",
+            tfield(lang, "Observer roll (deg)"),
             min_value=0.0,
             max_value=360.0,
             value=roll_default,
             step=0.5,
         )
         disk_model = st.selectbox(
-            "Disk model",
+            tfield(lang, "Disk model"),
             options=CHOICE_FIELDS["disk_model"],
             index=CHOICE_FIELDS["disk_model"].index(_safe_choice(CHOICE_FIELDS["disk_model"], str(cfg_seed["disk_model"]))),
         )
         disk_radial_profile = st.selectbox(
-            "Disk radial profile",
+            tfield(lang, "Disk radial profile"),
             options=CHOICE_FIELDS["disk_radial_profile"],
             index=CHOICE_FIELDS["disk_radial_profile"].index(
                 _safe_choice(CHOICE_FIELDS["disk_radial_profile"], str(cfg_seed["disk_radial_profile"]))
             ),
         )
-        disk_outer_radius = st.number_input("Disk outer radius", value=float(cfg_seed["disk_outer_radius"]), step=0.5)
+        disk_outer_radius = st.number_input(tfield(lang, "Disk outer radius"), value=float(cfg_seed["disk_outer_radius"]), step=0.5)
 
-    st.subheader("Disco e rendering")
+    st.subheader(tfield(lang, "Disk & Rendering"))
+    perf_option_labels = {
+        "manual": tfield(lang, "Manual"),
+        "gpu_balanced": tfield(lang, "GPU Balanced (Recommended)"),
+        "fast_preview": tfield(lang, "Fast Preview"),
+        "high_fidelity": tfield(lang, "High Fidelity"),
+    }
     perf_profile = st.selectbox(
-        "Performance profile",
-        options=[
-            "Manual",
-            "GPU Balanced (Recommended)",
-            "Fast Preview",
-            "High Fidelity",
-        ],
+        tfield(lang, "Performance profile"),
+        options=list(perf_option_labels.keys()),
         index=1,
+        format_func=lambda k: perf_option_labels.get(k, k),
         help=(
-            "Manual: non forza nulla. GPU Balanced: abilita compile+mixed precision e tiling ottimizzato. "
-            "Fast Preview: riduce costo per preview rapida. High Fidelity: privilegia stabilità numerica."
+            "Manual: leaves settings unchanged. "
+            "GPU Balanced: enables compile+mixed precision and optimized tiling. "
+            "Fast Preview: reduces cost for quick previews. "
+            "High Fidelity: prioritizes numeric stability."
         ),
     )
     d1, d2, d3, d4 = st.columns(4)
     with d1:
-        use_default_rin = st.checkbox("r_in = default (ISCO)", value=cfg_seed["disk_inner_radius"] is None)
+        use_default_rin = st.checkbox(tfield(lang, "r_in = default (ISCO)"), value=cfg_seed["disk_inner_radius"] is None)
         disk_inner_radius = None
         if not use_default_rin:
             disk_inner_radius = st.number_input(
-                "Disk inner radius",
+                tfield(lang, "Disk inner radius"),
                 value=float(cfg_seed["disk_inner_radius"] or 6.0),
                 step=0.1,
             )
-        disk_emission_gain = st.number_input("Disk emission gain", value=float(cfg_seed["disk_emission_gain"]), step=0.5)
+        disk_emission_gain = st.number_input(tfield(lang, "Disk emission gain"), value=float(cfg_seed["disk_emission_gain"]), step=0.5)
     with d2:
-        max_steps = st.number_input("Max steps", min_value=16, value=int(cfg_seed["max_steps"]), step=10)
-        step_size = st.number_input("Step size", min_value=0.001, value=float(cfg_seed["step_size"]), step=0.01)
-        adaptive_integrator = st.checkbox("Adaptive integrator", value=bool(cfg_seed["adaptive_integrator"]))
+        max_steps = st.number_input(tfield(lang, "Max steps"), min_value=16, value=int(cfg_seed["max_steps"]), step=10)
+        step_size = st.number_input(tfield(lang, "Step size"), min_value=0.001, value=float(cfg_seed["step_size"]), step=0.01)
+        adaptive_integrator = st.checkbox(tfield(lang, "Adaptive integrator"), value=bool(cfg_seed["adaptive_integrator"]))
     with d3:
         device = st.selectbox(
-            "Device",
+            tfield(lang, "Device"),
             options=CHOICE_FIELDS["device"],
             index=CHOICE_FIELDS["device"].index(_safe_choice(CHOICE_FIELDS["device"], str(cfg_seed["device"]))),
         )
         dtype = st.selectbox(
-            "Dtype",
+            tfield(lang, "Dtype"),
             options=CHOICE_FIELDS["dtype"],
             index=CHOICE_FIELDS["dtype"].index(_safe_choice(CHOICE_FIELDS["dtype"], str(cfg_seed["dtype"]))),
         )
-        show_progress_bar = st.checkbox("Show progress bar", value=bool(cfg_seed["show_progress_bar"]))
+        show_progress_bar = st.checkbox(tfield(lang, "Show progress bar"), value=bool(cfg_seed["show_progress_bar"]))
         progress_backend = st.selectbox(
-            "Progress backend",
+            tfield(lang, "Progress backend"),
             options=CHOICE_FIELDS["progress_backend"],
             index=CHOICE_FIELDS["progress_backend"].index(
                 _safe_choice(CHOICE_FIELDS["progress_backend"], str(cfg_seed.get("progress_backend", "manual")))
             ),
-            help="manual: barra custom; tqdm: barra tqdm; auto: usa tqdm quando disponibile",
+            help=tfield(lang, "manual: custom bar; tqdm: tqdm bar; auto: use tqdm when available"),
         )
     with d4:
-        mps_optimized_kernel = st.checkbox("MPS optimized kernel", value=bool(cfg_seed["mps_optimized_kernel"]))
-        compile_rhs = st.checkbox("Compile RHS", value=bool(cfg_seed["compile_rhs"]))
-        mixed_precision = st.checkbox("Mixed precision", value=bool(cfg_seed["mixed_precision"]))
-        camera_fastpath = st.checkbox("Camera fastpath", value=bool(cfg_seed["camera_fastpath"]))
+        mps_optimized_kernel = st.checkbox(tfield(lang, "MPS optimized kernel"), value=bool(cfg_seed["mps_optimized_kernel"]))
+        compile_rhs = st.checkbox(tfield(lang, "Compile RHS"), value=bool(cfg_seed["compile_rhs"]))
+        mixed_precision = st.checkbox(tfield(lang, "Mixed precision"), value=bool(cfg_seed["mixed_precision"]))
+        camera_fastpath = st.checkbox(tfield(lang, "Camera fastpath"), value=bool(cfg_seed["camera_fastpath"]))
         adaptive_spatial_sampling = bool(cfg_seed.get("adaptive_spatial_sampling", False))
         adaptive_spatial_preview_steps = int(cfg_seed.get("adaptive_spatial_preview_steps", 96))
         adaptive_spatial_min_scale = float(cfg_seed.get("adaptive_spatial_min_scale", 0.65))
         adaptive_spatial_quantile = float(cfg_seed.get("adaptive_spatial_quantile", 0.78))
         if supports_adaptive_spatial:
             adaptive_spatial_sampling = st.checkbox(
-                "Adaptive spatial sampling",
+                tfield(lang, "Adaptive spatial sampling"),
                 value=adaptive_spatial_sampling,
             )
             adaptive_spatial_preview_steps = st.number_input(
-                "Adaptive preview steps",
+                tfield(lang, "Adaptive preview steps"),
                 min_value=16,
                 max_value=10000,
                 value=adaptive_spatial_preview_steps,
                 step=8,
             )
             adaptive_spatial_min_scale = st.number_input(
-                "Adaptive min scale",
+                tfield(lang, "Adaptive min scale"),
                 min_value=0.10,
                 max_value=1.00,
                 value=adaptive_spatial_min_scale,
                 step=0.05,
             )
             adaptive_spatial_quantile = st.number_input(
-                "Adaptive quantile",
+                tfield(lang, "Adaptive quantile"),
                 min_value=0.50,
                 max_value=0.995,
                 value=adaptive_spatial_quantile,
@@ -859,28 +1631,28 @@ def main() -> None:
                 format="%.3f",
             )
         render_tile_rows = st.number_input(
-            "Render tile rows (0=auto)",
+            tfield(lang, "Render tile rows (0=auto)"),
             min_value=0,
             max_value=2048,
             value=int(cfg_seed["render_tile_rows"]),
             step=8,
         )
         postprocess_pipeline = st.selectbox(
-            "Postprocess pipeline",
+            tfield(lang, "Postprocess pipeline"),
             options=CHOICE_FIELDS["postprocess_pipeline"],
             index=CHOICE_FIELDS["postprocess_pipeline"].index(
                 _safe_choice(CHOICE_FIELDS["postprocess_pipeline"], str(cfg_seed["postprocess_pipeline"]))
             ),
         )
         gargantua_look_strength = st.slider(
-            "Gargantua look strength",
+            tfield(lang, "Gargantua look strength"),
             min_value=0.0,
             max_value=2.0,
             value=float(cfg_seed["gargantua_look_strength"]),
             step=0.05,
         )
 
-    if perf_profile == "GPU Balanced (Recommended)":
+    if perf_profile == "gpu_balanced":
         compile_rhs = True
         mixed_precision = True
         camera_fastpath = True
@@ -890,7 +1662,7 @@ def main() -> None:
             mps_optimized_kernel = True
         if int(render_tile_rows) <= 0 and int(height) >= 256:
             render_tile_rows = max(64, min(256, int(height // 4)))
-    elif perf_profile == "Fast Preview":
+    elif perf_profile == "fast_preview":
         compile_rhs = True
         mixed_precision = True
         camera_fastpath = True
@@ -906,39 +1678,39 @@ def main() -> None:
             adaptive_spatial_preview_steps = min(int(adaptive_spatial_preview_steps), 96)
         if int(render_tile_rows) <= 0:
             render_tile_rows = max(48, min(192, int(height // 3)))
-    elif perf_profile == "High Fidelity":
+    elif perf_profile == "high_fidelity":
         adaptive_integrator = True
         mixed_precision = False
         if supports_adaptive_spatial:
             adaptive_spatial_sampling = False
 
-    st.subheader("Sfondo")
+    st.subheader(tfield(lang, "Background"))
     b1, b2, b3 = st.columns(3)
     with b1:
         background_mode = st.selectbox(
-            "Background mode",
+            tfield(lang, "Background mode"),
             options=CHOICE_FIELDS["background_mode"],
             index=CHOICE_FIELDS["background_mode"].index(
                 _safe_choice(CHOICE_FIELDS["background_mode"], str(cfg_seed["background_mode"]))
             ),
         )
         background_projection = st.selectbox(
-            "Background projection",
+            tfield(lang, "Background projection"),
             options=CHOICE_FIELDS["background_projection"],
             index=CHOICE_FIELDS["background_projection"].index(
                 _safe_choice(CHOICE_FIELDS["background_projection"], str(cfg_seed["background_projection"]))
             ),
         )
     with b2:
-        enable_star_background = st.checkbox("Enable star background", value=bool(cfg_seed["enable_star_background"]))
-        star_density = st.number_input("Star density", min_value=0.0, value=float(cfg_seed["star_density"]), step=0.0001, format="%.6f")
-        star_brightness = st.number_input("Star brightness", min_value=0.0, value=float(cfg_seed["star_brightness"]), step=0.1)
+        enable_star_background = st.checkbox(tfield(lang, "Enable star background"), value=bool(cfg_seed["enable_star_background"]))
+        star_density = st.number_input(tfield(lang, "Star density"), min_value=0.0, value=float(cfg_seed["star_density"]), step=0.0001, format="%.6f")
+        star_brightness = st.number_input(tfield(lang, "Star brightness"), min_value=0.0, value=float(cfg_seed["star_brightness"]), step=0.1)
     with b3:
-        hdri_path = st.text_input("HDRI path", value=str(cfg_seed.get("hdri_path") or ""))
-        hdri_exposure = st.number_input("HDRI exposure", min_value=0.01, value=float(cfg_seed["hdri_exposure"]), step=0.1)
+        hdri_path = st.text_input(tfield(lang, "HDRI path"), value=str(cfg_seed.get("hdri_path") or ""))
+        hdri_exposure = st.number_input(tfield(lang, "HDRI exposure"), min_value=0.01, value=float(cfg_seed["hdri_exposure"]), step=0.1)
         hdri_rotation_default = _clamp(float(cfg_seed["hdri_rotation_deg"]), 0.0, 360.0)
         hdri_rotation_deg = st.number_input(
-            "HDRI rotation (deg)",
+            tfield(lang, "HDRI rotation (deg)"),
             min_value=0.0,
             max_value=360.0,
             value=hdri_rotation_default,
@@ -947,18 +1719,18 @@ def main() -> None:
 
     video_params: dict[str, Any] = {}
     if mode == "video":
-        st.subheader("Parametri video")
+        st.subheader(tfield(lang, "Video parameters"))
         v1, v2, v3, v4 = st.columns(4)
         with v1:
-            video_params["frames"] = st.number_input("Frames", min_value=1, value=100, step=1)
-            video_params["fps"] = st.number_input("FPS", min_value=1, value=10, step=1)
-            video_params["azimuth_orbits"] = st.number_input("Azimuth orbits", value=1.0, step=0.1)
+            video_params["frames"] = st.number_input(tfield(lang, "Frames"), min_value=1, value=100, step=1)
+            video_params["fps"] = st.number_input(tfield(lang, "FPS"), min_value=1, value=10, step=1)
+            video_params["azimuth_orbits"] = st.number_input(tfield(lang, "Azimuth orbits"), value=1.0, step=0.1)
         with v2:
-            video_params["inclination_wobble_deg"] = st.number_input("Inclination wobble", value=0.0, step=0.5)
-            use_incl_sweep = st.checkbox("Inclination sweep", value=True)
+            video_params["inclination_wobble_deg"] = st.number_input(tfield(lang, "Inclination wobble"), value=0.0, step=0.5)
+            use_incl_sweep = st.checkbox(tfield(lang, "Inclination sweep"), value=True)
             video_params["inclination_start_deg"] = (
                 st.number_input(
-                    "Inclination start",
+                    tfield(lang, "Inclination start"),
                     min_value=0.0,
                     max_value=180.0,
                     value=0.0,
@@ -969,7 +1741,7 @@ def main() -> None:
             )
             video_params["inclination_end_deg"] = (
                 st.number_input(
-                    "Inclination end",
+                    tfield(lang, "Inclination end"),
                     min_value=0.0,
                     max_value=180.0,
                     value=180.0,
@@ -979,26 +1751,196 @@ def main() -> None:
                 else None
             )
         with v3:
-            use_radius_sweep = st.checkbox("Radius sweep", value=False)
-            video_params["observer_radius_start"] = st.number_input("Radius start", value=float(observer_radius), step=0.5) if use_radius_sweep else None
-            video_params["observer_radius_end"] = st.number_input("Radius end", value=float(observer_radius), step=0.5) if use_radius_sweep else None
-            video_params["taa_samples"] = st.number_input("TAA samples", min_value=1, value=1, step=1)
+            use_radius_sweep = st.checkbox(tfield(lang, "Radius sweep"), value=False)
+            video_params["observer_radius_start"] = st.number_input(tfield(lang, "Radius start"), value=float(observer_radius), step=0.5) if use_radius_sweep else None
+            video_params["observer_radius_end"] = st.number_input(tfield(lang, "Radius end"), value=float(observer_radius), step=0.5) if use_radius_sweep else None
+            video_params["taa_samples"] = st.number_input(tfield(lang, "TAA samples"), min_value=1, value=1, step=1)
         with v4:
-            video_params["shutter_fraction"] = st.number_input("Shutter fraction", min_value=0.0, max_value=1.0, value=0.85, step=0.05)
-            video_params["spatial_jitter"] = st.checkbox("Spatial jitter", value=False)
-            video_params["stream_encode"] = st.checkbox("Stream encode", value=True)
-            video_params["adaptive_frame_steps"] = st.checkbox("Adaptive frame steps", value=True)
+            video_params["shutter_fraction"] = st.number_input(tfield(lang, "Shutter fraction"), min_value=0.0, max_value=1.0, value=0.85, step=0.05)
+            video_params["spatial_jitter"] = st.checkbox(tfield(lang, "Spatial jitter"), value=False)
+            video_params["stream_encode"] = st.checkbox(tfield(lang, "Stream encode"), value=True)
+            video_params["adaptive_frame_steps"] = st.checkbox(tfield(lang, "Adaptive frame steps"), value=True)
             video_params["adaptive_frame_steps_min_scale"] = st.number_input(
-                "Adaptive min scale",
+                tfield(lang, "Adaptive min scale"),
                 min_value=0.1,
                 max_value=1.0,
                 value=0.60,
                 step=0.05,
             )
 
-    with st.expander("Override JSON avanzato (facoltativo)"):
-        st.write("Inserisci solo i campi da sovrascrivere, ad esempio: `{\"disk_beaming_strength\": 0.6}`")
-        patch_text = st.text_area("JSON patch", value="{}", height=220)
+    starship_params: dict[str, Any] = {}
+    starship_video_params: dict[str, Any] = {}
+    if mode in {"starship_frame", "starship_video"}:
+        st.subheader(tfield(lang, "Starship overlay (OBJ)"))
+        default_obj_path = str(
+            loaded_cfg.get("starship_obj_path")
+            or _default_starship_obj(workspace_path_preview)
+        )
+        s1, s2, s3 = st.columns(3)
+        with s1:
+            starship_params["obj_path"] = st.text_input(
+                tfield(lang, "OBJ model path"),
+                value=default_obj_path,
+            )
+            starship_params["ship_radius"] = st.number_input(
+                tfield(lang, "Ship radius (M)"),
+                value=float(loaded_cfg.get("ship_radius", 20.0)),
+                step=0.5,
+            )
+            starship_params["ship_theta_deg"] = st.number_input(
+                tfield(lang, "Ship theta (deg)"),
+                min_value=0.0,
+                max_value=180.0,
+                value=float(loaded_cfg.get("ship_theta_deg", 87.0)),
+                step=0.5,
+            )
+            starship_params["ship_phi_deg"] = st.number_input(
+                tfield(lang, "Ship phi (deg)"),
+                min_value=0.0,
+                max_value=360.0,
+                value=float(loaded_cfg.get("ship_phi_deg", 0.0)),
+                step=0.5,
+            )
+        with s2:
+            starship_params["ship_size"] = st.number_input(
+                tfield(lang, "Ship size (M)"),
+                min_value=0.05,
+                value=float(loaded_cfg.get("ship_size", 1.9)),
+                step=0.1,
+            )
+            starship_params["ship_yaw_deg"] = st.number_input(
+                tfield(lang, "Ship yaw (deg)"),
+                value=float(loaded_cfg.get("ship_yaw_deg", 34.0)),
+                step=1.0,
+            )
+            starship_params["ship_pitch_deg"] = st.number_input(
+                tfield(lang, "Ship pitch (deg)"),
+                value=float(loaded_cfg.get("ship_pitch_deg", -12.0)),
+                step=1.0,
+            )
+            starship_params["ship_roll_deg"] = st.number_input(
+                tfield(lang, "Ship roll (deg)"),
+                value=float(loaded_cfg.get("ship_roll_deg", 16.0)),
+                step=1.0,
+            )
+        with s3:
+            starship_params["ship_opacity"] = st.slider(
+                tfield(lang, "Ship opacity"),
+                min_value=0.0,
+                max_value=1.0,
+                value=float(loaded_cfg.get("ship_opacity", 0.95)),
+                step=0.01,
+            )
+            starship_params["cinematic_strength"] = st.slider(
+                tfield(lang, "Cinematic strength"),
+                min_value=0.0,
+                max_value=2.0,
+                value=float(loaded_cfg.get("cinematic_strength", 1.45)),
+                step=0.05,
+            )
+
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            starship_params["ship_v_phi"] = st.number_input(
+                tfield(lang, "Ship v_phi"),
+                value=float(loaded_cfg.get("ship_v_phi", 0.46)),
+                step=0.01,
+            )
+            starship_params["ship_v_theta"] = st.number_input(
+                tfield(lang, "Ship v_theta"),
+                value=float(loaded_cfg.get("ship_v_theta", 0.04)),
+                step=0.01,
+            )
+            starship_params["ship_v_r"] = st.number_input(
+                tfield(lang, "Ship v_r"),
+                value=float(loaded_cfg.get("ship_v_r", 0.0)),
+                step=0.01,
+            )
+        with m2:
+            starship_params["ship_acceleration"] = st.number_input(
+                tfield(lang, "Ship acceleration"),
+                min_value=0.0,
+                value=float(loaded_cfg.get("ship_acceleration", 0.0)),
+                step=0.01,
+            )
+            direction_modes = [
+                "azimuthal_prograde",
+                "azimuthal_retrograde",
+                "radial_out",
+                "radial_in",
+                "polar_north",
+                "polar_south",
+                "custom",
+            ]
+            default_mode = str(loaded_cfg.get("ship_direction_mode", "azimuthal_prograde"))
+            if default_mode not in direction_modes:
+                default_mode = "azimuthal_prograde"
+            starship_params["ship_direction_mode"] = st.selectbox(
+                tfield(lang, "Ship direction mode"),
+                options=direction_modes,
+                index=direction_modes.index(default_mode),
+            )
+        with m3:
+            starship_params["ship_dir_x"] = st.number_input(
+                tfield(lang, "Ship dir x"),
+                value=float(loaded_cfg.get("ship_dir_x", 0.0)),
+                step=0.1,
+            )
+            starship_params["ship_dir_y"] = st.number_input(
+                tfield(lang, "Ship dir y"),
+                value=float(loaded_cfg.get("ship_dir_y", 0.0)),
+                step=0.1,
+            )
+            starship_params["ship_dir_z"] = st.number_input(
+                tfield(lang, "Ship dir z"),
+                value=float(loaded_cfg.get("ship_dir_z", 1.0)),
+                step=0.1,
+            )
+
+        default_program = str(loaded_cfg.get("ship_program_json", "[]"))
+        starship_params["ship_program_json"] = st.text_area(
+            tfield(lang, "Ship thrust program JSON"),
+            value=default_program,
+            height=120,
+        )
+        default_multi_ship = str(loaded_cfg.get("multi_ship_config_json", ""))
+        starship_params["multi_ship_config_json"] = st.text_area(
+            tfield(lang, "Multi-ship config JSON"),
+            value=default_multi_ship,
+            height=140,
+        )
+
+        if mode == "starship_video":
+            st.subheader(tfield(lang, "Video parameters"))
+            sv1, sv2 = st.columns(2)
+            with sv1:
+                starship_video_params["frames"] = st.number_input(
+                    tfield(lang, "Starship frames"),
+                    min_value=1,
+                    value=int(loaded_cfg.get("starship_frames", 100)),
+                    step=1,
+                )
+                starship_video_params["fps"] = st.number_input(
+                    tfield(lang, "Starship FPS"),
+                    min_value=1,
+                    value=int(loaded_cfg.get("starship_fps", 10)),
+                    step=1,
+                )
+            with sv2:
+                starship_video_params["ship_substeps"] = st.number_input(
+                    tfield(lang, "Ship integration substeps"),
+                    min_value=1,
+                    value=int(loaded_cfg.get("ship_substeps", 3)),
+                    step=1,
+                )
+                starship_video_params["keep_frames"] = st.checkbox(
+                    tfield(lang, "Keep starship frames"),
+                    value=bool(loaded_cfg.get("keep_starship_frames", False)),
+                )
+
+    with st.expander(tfield(lang, "Advanced JSON override (optional)")):
+        st.write(tfield(lang, "Enter only fields to override, for example: `{\"disk_beaming_strength\": 0.6}`"))
+        patch_text = st.text_area(tfield(lang, "JSON patch"), value="{}", height=220)
 
     config_dict = dict(default_cfg)
     config_dict.update(
@@ -1070,7 +2012,7 @@ def main() -> None:
         config_dict.update(patch)
         cfg_obj = replace(RenderConfig(), **config_dict).validated()
     except Exception as exc:
-        st.error(f"Configurazione non valida: {exc}")
+        st.error(f"{tfield(lang, 'Invalid configuration')}: {exc}")
         return
 
     workspace_path = Path(workspace).expanduser().resolve()
@@ -1080,49 +2022,177 @@ def main() -> None:
     cfg_path = run_dir / f"config_{stamp}.json"
     cfg_path.write_text(json.dumps(asdict(cfg_obj), indent=2), encoding="utf-8")
 
-    cmd = [python_exec, "-m", "kerrtrace", "--config", str(cfg_path), "--output", str(cfg_obj.output)]
-    if require_gpu:
-        cmd.append("--require-gpu")
-    if mode == "video":
-        cmd += [
-            "--animate",
-            "--frames",
-            str(int(video_params["frames"])),
-            "--fps",
-            str(int(video_params["fps"])),
-            "--azimuth-orbits",
-            str(float(video_params["azimuth_orbits"])),
-            "--inclination-wobble-deg",
-            str(float(video_params["inclination_wobble_deg"])),
-            "--taa-samples",
-            str(int(video_params["taa_samples"])),
-            "--shutter-fraction",
-            str(float(video_params["shutter_fraction"])),
-            "--adaptive-frame-steps-min-scale",
-            str(float(video_params["adaptive_frame_steps_min_scale"])),
-        ]
-        if video_params["inclination_start_deg"] is not None and video_params["inclination_end_deg"] is not None:
-            cmd += [
-                "--inclination-start-deg",
-                str(float(video_params["inclination_start_deg"])),
-                "--inclination-end-deg",
-                str(float(video_params["inclination_end_deg"])),
-            ]
-        if video_params["observer_radius_start"] is not None and video_params["observer_radius_end"] is not None:
-            cmd += [
-                "--observer-radius-start",
-                str(float(video_params["observer_radius_start"])),
-                "--observer-radius-end",
-                str(float(video_params["observer_radius_end"])),
-            ]
-        if bool(video_params["spatial_jitter"]):
-            cmd.append("--spatial-jitter")
-        if bool(video_params["stream_encode"]):
-            cmd.append("--enable-stream-encode")
+    if mode in {"starship_frame", "starship_video"}:
+        script_path = workspace_path / "scripts" / "render_obj_starship_video.py"
+        if not script_path.exists():
+            st.error(f"Script non trovato: {script_path}")
+            return
+        obj_raw = str(starship_params.get("obj_path") or "").strip()
+        if not obj_raw:
+            st.error("OBJ model path è obbligatorio in modalità Starship.")
+            return
+        obj_path = Path(obj_raw).expanduser()
+        if not obj_path.is_absolute():
+            obj_path = workspace_path / obj_path
+        obj_path = obj_path.resolve()
+        if not obj_path.exists():
+            st.error(f"OBJ non trovato: {obj_path}")
+            return
+
+        if require_gpu and device == "cpu":
+            st.error("Richiesta GPU attiva: imposta device su auto/mps/cuda (non cpu).")
+            return
+
+        program_raw = str(starship_params.get("ship_program_json") or "").strip()
+        if not program_raw:
+            program_raw = "[]"
+        try:
+            thrust_program_payload = json.loads(program_raw)
+            if not isinstance(thrust_program_payload, list):
+                raise ValueError("ship thrust program must be a JSON list")
+        except Exception as exc:
+            st.error(f"Ship thrust program JSON non valido: {exc}")
+            return
+
+        multi_ship_raw = str(starship_params.get("multi_ship_config_json") or "").strip()
+        if multi_ship_raw:
+            try:
+                multi_payload = json.loads(multi_ship_raw)
+                if isinstance(multi_payload, list):
+                    ship_cfg_payload: dict[str, Any] = {"ships": multi_payload}
+                elif isinstance(multi_payload, dict):
+                    ship_cfg_payload = multi_payload
+                else:
+                    raise ValueError("multi-ship JSON must be an object or list")
+            except Exception as exc:
+                st.error(f"Multi-ship config JSON non valido: {exc}")
+                return
         else:
-            cmd.append("--disable-stream-encode")
-        if not bool(video_params["adaptive_frame_steps"]):
-            cmd.append("--disable-adaptive-frame-steps")
+            ship_cfg_payload = {
+                "ships": [
+                    {
+                        "name": "ship0",
+                        "obj": str(obj_path),
+                        "radius": float(starship_params["ship_radius"]),
+                        "theta_deg": float(starship_params["ship_theta_deg"]),
+                        "phi_deg": float(starship_params["ship_phi_deg"]),
+                        "size": float(starship_params["ship_size"]),
+                        "yaw_deg": float(starship_params["ship_yaw_deg"]),
+                        "pitch_deg": float(starship_params["ship_pitch_deg"]),
+                        "roll_deg": float(starship_params["ship_roll_deg"]),
+                        "opacity": float(starship_params["ship_opacity"]),
+                        "cinematic_strength": float(starship_params["cinematic_strength"]),
+                        "v_phi": float(starship_params["ship_v_phi"]),
+                        "v_theta": float(starship_params["ship_v_theta"]),
+                        "v_r": float(starship_params["ship_v_r"]),
+                        "acceleration": float(starship_params["ship_acceleration"]),
+                        "direction_mode": str(starship_params["ship_direction_mode"]),
+                        "direction_vector": [
+                            float(starship_params["ship_dir_x"]),
+                            float(starship_params["ship_dir_y"]),
+                            float(starship_params["ship_dir_z"]),
+                        ],
+                        "thrust_program": thrust_program_payload,
+                    }
+                ]
+            }
+
+        ship_cfg_path = run_dir / f"starships_{stamp}.json"
+        ship_cfg_path.write_text(json.dumps(ship_cfg_payload, indent=2), encoding="utf-8")
+
+        starship_frames = 1
+        starship_fps = 10
+        ship_substeps = 3
+        keep_starship_frames = False
+        if mode == "starship_video":
+            starship_frames = int(starship_video_params.get("frames", 100))
+            starship_fps = int(starship_video_params.get("fps", 10))
+            ship_substeps = int(starship_video_params.get("ship_substeps", 3))
+            keep_starship_frames = bool(starship_video_params.get("keep_frames", False))
+
+        cmd = [
+            python_exec,
+            "-m",
+            "scripts.render_obj_starship_video",
+            "--ship-config-json",
+            str(ship_cfg_path),
+            "--output",
+            str(cfg_obj.output),
+            "--width",
+            str(int(width)),
+            "--height",
+            str(int(height)),
+            "--observer-radius",
+            str(float(observer_radius)),
+            "--observer-theta-deg",
+            str(float(observer_inclination_deg)),
+            "--observer-phi-deg",
+            str(float(observer_azimuth_deg)),
+            "--frames",
+            str(int(starship_frames)),
+            "--fps",
+            str(int(starship_fps)),
+            "--ship-substeps",
+            str(int(ship_substeps)),
+            "--disk-outer-radius",
+            str(float(disk_outer_radius)),
+            "--disk-emission-gain",
+            str(float(disk_emission_gain)),
+            "--step-size",
+            str(float(step_size)),
+            "--max-steps",
+            str(int(max_steps)),
+            "--device",
+            str(device),
+        ]
+        if keep_starship_frames:
+            cmd.append("--keep-frames")
+        if disk_inner_radius is not None:
+            cmd += ["--disk-inner-radius", str(float(disk_inner_radius))]
+    else:
+        cmd = [python_exec, "-m", "kerrtrace", "--config", str(cfg_path), "--output", str(cfg_obj.output)]
+        if require_gpu:
+            cmd.append("--require-gpu")
+        if mode == "video":
+            cmd += [
+                "--animate",
+                "--frames",
+                str(int(video_params["frames"])),
+                "--fps",
+                str(int(video_params["fps"])),
+                "--azimuth-orbits",
+                str(float(video_params["azimuth_orbits"])),
+                "--inclination-wobble-deg",
+                str(float(video_params["inclination_wobble_deg"])),
+                "--taa-samples",
+                str(int(video_params["taa_samples"])),
+                "--shutter-fraction",
+                str(float(video_params["shutter_fraction"])),
+                "--adaptive-frame-steps-min-scale",
+                str(float(video_params["adaptive_frame_steps_min_scale"])),
+            ]
+            if video_params["inclination_start_deg"] is not None and video_params["inclination_end_deg"] is not None:
+                cmd += [
+                    "--inclination-start-deg",
+                    str(float(video_params["inclination_start_deg"])),
+                    "--inclination-end-deg",
+                    str(float(video_params["inclination_end_deg"])),
+                ]
+            if video_params["observer_radius_start"] is not None and video_params["observer_radius_end"] is not None:
+                cmd += [
+                    "--observer-radius-start",
+                    str(float(video_params["observer_radius_start"])),
+                    "--observer-radius-end",
+                    str(float(video_params["observer_radius_end"])),
+                ]
+            if bool(video_params["spatial_jitter"]):
+                cmd.append("--spatial-jitter")
+            if bool(video_params["stream_encode"]):
+                cmd.append("--enable-stream-encode")
+            else:
+                cmd.append("--disable-stream-encode")
+            if not bool(video_params["adaptive_frame_steps"]):
+                cmd.append("--disable-adaptive-frame-steps")
 
     st.info(tr(lang, "cmd_launched", "Comando lanciato:"))
     st.code(" ".join(cmd), language="bash")

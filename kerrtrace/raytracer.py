@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from contextlib import nullcontext
+import hashlib
 import math
 import numpy as np
 from pathlib import Path
 import sys
 import threading
 import time
-from typing import Callable
+from typing import Callable, Sequence
 
 from PIL import Image
 import torch
@@ -60,6 +61,9 @@ class PointEmitter:
     radius: float = 0.45
     intensity: float = 4.0
     color_rgb: tuple[float, float, float] = (0.55, 0.78, 1.0)
+
+
+EmitterInput = PointEmitter | Sequence[PointEmitter] | None
 
 
 class KerrRayTracer:
@@ -141,6 +145,20 @@ class KerrRayTracer:
             dtype=self.dtype,
             device=self.device,
         )
+        self._persistent_cache_root: Path | None = None
+        if self.config.persistent_cache_enabled:
+            try:
+                root = Path(self.config.persistent_cache_dir).expanduser().resolve()
+                root.mkdir(parents=True, exist_ok=True)
+                self._persistent_cache_root = root
+            except Exception:
+                self._persistent_cache_root = None
+        self._cuda_finalize_graph_ready = False
+        self._cuda_finalize_graph_failed = False
+        self._cuda_finalize_graph: torch.cuda.CUDAGraph | None = None
+        self._cuda_finalize_static_in: torch.Tensor | None = None
+        self._cuda_finalize_static_out: torch.Tensor | None = None
+        self._disk_flux_lut_main: tuple[torch.Tensor, torch.Tensor] | None = None
         self._rhs_fn = self._rhs
         if (self.config.compile_rhs or self.use_mps_optimized_kernel) and self.config.coordinate_system == "boyer_lindquist":
             compiled_unbound = self._get_compiled_unbound(
@@ -194,6 +212,16 @@ class KerrRayTracer:
         self._cubemap_faces: tuple[torch.Tensor, ...] | None = None
         if self.config.enable_star_background and self.config.background_projection == "cubemap":
             self._cubemap_faces = self._get_or_build_cubemap()
+        if self.config.disk_model == "physical_nt":
+            try:
+                rin0 = float(self.config.disk_inner_radius)
+                rout0 = float(self.config.disk_outer_radius)
+                if self.config.disk_radial_profile == "nt_page_thorne" and self.config.metric_model == "kerr":
+                    self._disk_flux_lut_main = self._build_nt_page_thorne_lut(rin=rin0, rmax=rout0)
+                else:
+                    self._disk_flux_lut_main = self._build_nt_general_lut(rin=rin0, rmax=rout0)
+            except Exception:
+                self._disk_flux_lut_main = None
         self._disk_flux_reference = self._compute_disk_flux_reference()
 
     def set_observer(
@@ -227,6 +255,92 @@ class KerrRayTracer:
         if new_cfg.resolve_dtype() != self.dtype:
             raise RuntimeError("set_observer cannot change dtype on an existing tracer")
         self.config = new_cfg
+
+    def _normalize_emitters(self, emitter: EmitterInput) -> list[PointEmitter]:
+        if emitter is None:
+            return []
+        if isinstance(emitter, PointEmitter):
+            return [emitter]
+        out: list[PointEmitter] = []
+        for item in emitter:
+            if not isinstance(item, PointEmitter):
+                raise TypeError("emitter sequence must contain only PointEmitter instances")
+            out.append(item)
+        return out
+
+    def _persistent_cache_path(self, namespace: str, key: tuple[object, ...]) -> Path | None:
+        root = self._persistent_cache_root
+        if root is None:
+            return None
+        try:
+            digest = hashlib.sha1(repr((namespace, key)).encode("utf-8")).hexdigest()[:24]
+            ns_dir = root / namespace
+            ns_dir.mkdir(parents=True, exist_ok=True)
+            return ns_dir / f"{digest}.npz"
+        except Exception:
+            return None
+
+    def _persistent_load_lut_pair(self, namespace: str, key: tuple[object, ...]) -> tuple[torch.Tensor, torch.Tensor] | None:
+        path = self._persistent_cache_path(namespace, key)
+        if path is None or (not path.exists()):
+            return None
+        try:
+            with np.load(path) as data:
+                rr = data["rr"]
+                flux = data["flux"]
+            rr_t = torch.from_numpy(rr).to(device=self.device, dtype=self.dtype)
+            flux_t = torch.from_numpy(flux).to(device=self.device, dtype=self.dtype)
+            if rr_t.ndim != 1 or flux_t.ndim != 1 or int(rr_t.shape[0]) != int(flux_t.shape[0]) or int(rr_t.shape[0]) < 2:
+                return None
+            return rr_t.contiguous(), flux_t.contiguous()
+        except Exception:
+            return None
+
+    def _persistent_save_lut_pair(
+        self,
+        namespace: str,
+        key: tuple[object, ...],
+        rr: torch.Tensor,
+        flux: torch.Tensor,
+    ) -> None:
+        path = self._persistent_cache_path(namespace, key)
+        if path is None:
+            return
+        try:
+            rr_np = rr.detach().to(device="cpu", dtype=torch.float32).numpy()
+            flux_np = flux.detach().to(device="cpu", dtype=torch.float32).numpy()
+            np.savez_compressed(path, rr=rr_np, flux=flux_np)
+        except Exception:
+            return
+
+    def _persistent_load_cubemap(self, key: tuple[object, ...]) -> tuple[torch.Tensor, ...] | None:
+        path = self._persistent_cache_path("cubemap", key)
+        if path is None or (not path.exists()):
+            return None
+        try:
+            with np.load(path) as data:
+                faces: list[torch.Tensor] = []
+                for idx in range(6):
+                    arr = data[f"face_{idx}"]
+                    faces.append(torch.from_numpy(arr).to(device=self.device, dtype=self.dtype).contiguous())
+            if len(faces) != 6:
+                return None
+            return tuple(faces)
+        except Exception:
+            return None
+
+    def _persistent_save_cubemap(self, key: tuple[object, ...], faces: tuple[torch.Tensor, ...]) -> None:
+        path = self._persistent_cache_path("cubemap", key)
+        if path is None:
+            return
+        try:
+            payload = {
+                f"face_{idx}": face.detach().to(device="cpu", dtype=torch.float16).numpy()
+                for idx, face in enumerate(faces)
+            }
+            np.savez_compressed(path, **payload)
+        except Exception:
+            return
 
     def _compute_disk_flux_reference(self) -> float:
         cfg = self.config
@@ -1948,6 +2062,8 @@ class KerrRayTracer:
     def _build_nt_general_lut(self, rin: float, rmax: float) -> tuple[torch.Tensor, torch.Tensor]:
         rin_safe = max(1.0e-4, float(rin) * 1.0005)
         rmax_safe = max(rin_safe + 1.0e-3, float(rmax))
+        span = rmax_safe - rin_safe
+        samples = max(512, min(4096, int(512 + 64.0 * span)))
         key = (
             "nt_general",
             str(self.device),
@@ -1958,13 +2074,26 @@ class KerrRayTracer:
             round(float(self.config.cosmological_constant), 12),
             round(rin_safe, 6),
             round(rmax_safe, 3),
+            int(samples),
         )
         cached = KerrRayTracer._nt_page_thorne_cache.get(key)
         if cached is not None:
             return cached
 
-        span = rmax_safe - rin_safe
-        samples = max(512, min(4096, int(512 + 64.0 * span)))
+        disk_key = (
+            self.config.metric_model,
+            round(float(self.config.spin), 8),
+            round(float(self.config.charge), 8),
+            round(float(self.config.cosmological_constant), 12),
+            round(rin_safe, 6),
+            round(rmax_safe, 3),
+            int(samples),
+        )
+        persisted = self._persistent_load_lut_pair("nt_general", disk_key)
+        if persisted is not None:
+            KerrRayTracer._nt_page_thorne_cache[key] = persisted
+            return persisted
+
         rr = torch.linspace(rin_safe, rmax_safe, samples, dtype=self.dtype, device=self.device)
         theta = torch.full_like(rr, math.pi * 0.5)
         metric = metric_components(
@@ -2027,6 +2156,7 @@ class KerrRayTracer:
             flux = self._novikov_thorne_flux_profile_proxy(rr, torch.as_tensor(rin_safe, dtype=self.dtype, device=self.device))
 
         KerrRayTracer._nt_page_thorne_cache[key] = (rr, flux)
+        self._persistent_save_lut_pair("nt_general", disk_key, rr, flux)
         if len(KerrRayTracer._nt_page_thorne_cache) > 24:
             KerrRayTracer._nt_page_thorne_cache.pop(next(iter(KerrRayTracer._nt_page_thorne_cache)))
         return rr, flux
@@ -2067,6 +2197,8 @@ class KerrRayTracer:
     def _build_nt_page_thorne_lut(self, rin: float, rmax: float) -> tuple[torch.Tensor, torch.Tensor]:
         rin_safe = max(1.0e-4, float(rin) * 1.0005)
         rmax_safe = max(rin_safe + 1.0e-3, float(rmax))
+        span = rmax_safe - rin_safe
+        samples = max(512, min(4096, int(512 + 64.0 * span)))
         a_key = round(float(self.metric_spin), 8)
         key = (
             str(self.device),
@@ -2074,13 +2206,23 @@ class KerrRayTracer:
             a_key,
             round(rin_safe, 6),
             round(rmax_safe, 6),
+            int(samples),
         )
         cached = KerrRayTracer._nt_page_thorne_cache.get(key)
         if cached is not None:
             return cached
 
-        span = rmax_safe - rin_safe
-        samples = max(512, min(4096, int(512 + 64.0 * span)))
+        disk_key = (
+            round(float(self.metric_spin), 8),
+            round(rin_safe, 6),
+            round(rmax_safe, 6),
+            int(samples),
+        )
+        persisted = self._persistent_load_lut_pair("nt_page_thorne", disk_key)
+        if persisted is not None:
+            KerrRayTracer._nt_page_thorne_cache[key] = persisted
+            return persisted
+
         rr = torch.linspace(rin_safe, rmax_safe, samples, dtype=self.dtype, device=self.device)
         omega, energy, ang_mom, d_omega_dr = self._kerr_circular_orbit_quantities(rr)
 
@@ -2101,6 +2243,7 @@ class KerrRayTracer:
         flux[0] = 0.0
 
         KerrRayTracer._nt_page_thorne_cache[key] = (rr, flux)
+        self._persistent_save_lut_pair("nt_page_thorne", disk_key, rr, flux)
         if len(KerrRayTracer._nt_page_thorne_cache) > 24:
             KerrRayTracer._nt_page_thorne_cache.pop(next(iter(KerrRayTracer._nt_page_thorne_cache)))
         return rr, flux
@@ -2324,8 +2467,14 @@ class KerrRayTracer:
         cached = KerrRayTracer._cubemap_cache.get(key)
         if cached is not None:
             return cached
+        disk_key = key[:-2]
+        persisted = self._persistent_load_cubemap(disk_key)
+        if persisted is not None:
+            KerrRayTracer._cubemap_cache[key] = persisted
+            return persisted
         built = self._build_cubemap_faces(self.config.cubemap_face_size)
         KerrRayTracer._cubemap_cache[key] = built
+        self._persistent_save_cubemap(disk_key, built)
         if len(KerrRayTracer._cubemap_cache) > 8:
             KerrRayTracer._cubemap_cache.pop(next(iter(KerrRayTracer._cubemap_cache)))
         return built
@@ -2457,7 +2606,7 @@ class KerrRayTracer:
         self,
         x_pixel_offset: float = 0.0,
         y_pixel_offset: float = 0.0,
-        emitter: PointEmitter | None = None,
+        emitter: EmitterInput = None,
         row_start: int = 0,
         row_end: int | None = None,
     ) -> tuple[
@@ -2509,14 +2658,19 @@ class KerrRayTracer:
         p_theta_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_phi_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
 
+        emitters = self._normalize_emitters(emitter)
         emitter_pos: torch.Tensor | None = None
-        emitter_radius2 = torch.as_tensor(0.0, dtype=self.dtype, device=self.device)
-        if emitter is not None:
-            em_r = torch.as_tensor(emitter.r, dtype=self.dtype, device=self.device)
-            em_theta = torch.as_tensor(emitter.theta, dtype=self.dtype, device=self.device)
-            em_phi = torch.as_tensor(emitter.phi, dtype=self.dtype, device=self.device)
+        emitter_radius2: torch.Tensor | None = None
+        if emitters:
+            em_r = torch.as_tensor([em.r for em in emitters], dtype=self.dtype, device=self.device)
+            em_theta = torch.as_tensor([em.theta for em in emitters], dtype=self.dtype, device=self.device)
+            em_phi = torch.as_tensor([em.phi for em in emitters], dtype=self.dtype, device=self.device)
             emitter_pos = self._bl_to_cartesian_kerr_schild(em_r, em_theta, em_phi)
-            emitter_radius2 = torch.as_tensor(emitter.radius * emitter.radius, dtype=self.dtype, device=self.device)
+            emitter_radius2 = torch.as_tensor(
+                [em.radius * em.radius for em in emitters],
+                dtype=self.dtype,
+                device=self.device,
+            )
 
         horizon_cut = self.horizon * 1.0005
         ray_step = torch.full((n,), float(cfg.step_size), dtype=self.dtype, device=self.device)
@@ -2718,43 +2872,51 @@ class KerrRayTracer:
 
             alpha_particle = torch.zeros_like(prev_r)
             particle_local = torch.zeros_like(valid_disk)
-            if emitter_pos is not None:
+            if emitter_pos is not None and emitter_radius2 is not None:
                 prev_xyz = self._bl_to_cartesian(prev_r, prev_theta, prev_state[:, 3])
                 next_xyz = self._bl_to_cartesian(next_r, next_theta, next_state[:, 3])
                 seg = next_xyz - prev_xyz
                 seg2 = torch.clamp(torch.sum(seg * seg, dim=-1), min=1.0e-9)
-                to_emitter = emitter_pos.view(1, 3) - prev_xyz
-                alpha_seg = torch.clamp(torch.sum(to_emitter * seg, dim=-1) / seg2, min=0.0, max=1.0)
-                # Refine hit test on the interpolated geodesic point (not the straight segment chord)
-                # to reduce false-positive "blob" hits in strongly bent trajectories.
-                r_part = self._hermite_interp(
-                    prev_r,
-                    next_r,
-                    deriv_prev[:, 1],
-                    deriv_next[:, 1],
-                    step_used,
-                    alpha_seg,
-                )
-                theta_part = self._hermite_interp(
-                    prev_theta,
-                    next_theta,
-                    deriv_prev[:, 2],
-                    deriv_next[:, 2],
-                    step_used,
-                    alpha_seg,
-                )
-                phi_part = self._hermite_interp(
-                    prev_state[:, 3],
-                    next_state[:, 3],
-                    deriv_prev[:, 3],
-                    deriv_next[:, 3],
-                    step_used,
-                    alpha_seg,
-                )
-                geodesic_xyz = self._bl_to_cartesian(r_part, theta_part, phi_part)
-                dist2 = torch.sum((geodesic_xyz - emitter_pos.view(1, 3)) * (geodesic_xyz - emitter_pos.view(1, 3)), dim=-1)
-                particle_local = (dist2 <= emitter_radius2) & torch.isfinite(dist2) & (r_part > horizon_cut)
-                alpha_particle = torch.where(particle_local, alpha_seg, alpha_particle)
+                alpha_best = torch.full_like(prev_r, 2.0)
+                for em_idx in range(int(emitter_pos.shape[0])):
+                    em_pos = emitter_pos[em_idx]
+                    em_r2 = emitter_radius2[em_idx]
+                    to_emitter = em_pos.view(1, 3) - prev_xyz
+                    alpha_seg = torch.clamp(torch.sum(to_emitter * seg, dim=-1) / seg2, min=0.0, max=1.0)
+                    # Refine hit test on the interpolated geodesic point (not the straight segment chord)
+                    # to reduce false-positive hits in strongly bent trajectories.
+                    r_part = self._hermite_interp(
+                        prev_r,
+                        next_r,
+                        deriv_prev[:, 1],
+                        deriv_next[:, 1],
+                        step_used,
+                        alpha_seg,
+                    )
+                    theta_part = self._hermite_interp(
+                        prev_theta,
+                        next_theta,
+                        deriv_prev[:, 2],
+                        deriv_next[:, 2],
+                        step_used,
+                        alpha_seg,
+                    )
+                    phi_part = self._hermite_interp(
+                        prev_state[:, 3],
+                        next_state[:, 3],
+                        deriv_prev[:, 3],
+                        deriv_next[:, 3],
+                        step_used,
+                        alpha_seg,
+                    )
+                    geodesic_xyz = self._bl_to_cartesian(r_part, theta_part, phi_part)
+                    delta = geodesic_xyz - em_pos.view(1, 3)
+                    dist2 = torch.sum(delta * delta, dim=-1)
+                    local_hit = (dist2 <= em_r2) & torch.isfinite(dist2) & (r_part > horizon_cut)
+                    better = local_hit & (alpha_seg < alpha_best)
+                    alpha_best = torch.where(better, alpha_seg, alpha_best)
+                    particle_local = particle_local | local_hit
+                alpha_particle = torch.where(particle_local, alpha_best, alpha_particle)
 
             horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
             horizon_local = horizon_cross & (~valid_disk)
@@ -2952,7 +3114,7 @@ class KerrRayTracer:
         self,
         x_pixel_offset: float = 0.0,
         y_pixel_offset: float = 0.0,
-        emitter: PointEmitter | None = None,
+        emitter: EmitterInput = None,
         row_start: int = 0,
         row_end: int | None = None,
     ) -> tuple[
@@ -3010,14 +3172,19 @@ class KerrRayTracer:
         p_theta_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_phi_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
 
+        emitters = self._normalize_emitters(emitter)
         emitter_pos: torch.Tensor | None = None
-        emitter_radius2 = torch.as_tensor(0.0, dtype=self.dtype, device=self.device)
-        if emitter is not None:
-            em_r = torch.as_tensor(emitter.r, dtype=self.dtype, device=self.device)
-            em_theta = torch.as_tensor(emitter.theta, dtype=self.dtype, device=self.device)
-            em_phi = torch.as_tensor(emitter.phi, dtype=self.dtype, device=self.device)
+        emitter_radius2: torch.Tensor | None = None
+        if emitters:
+            em_r = torch.as_tensor([em.r for em in emitters], dtype=self.dtype, device=self.device)
+            em_theta = torch.as_tensor([em.theta for em in emitters], dtype=self.dtype, device=self.device)
+            em_phi = torch.as_tensor([em.phi for em in emitters], dtype=self.dtype, device=self.device)
             emitter_pos = self._bl_to_cartesian_kerr_schild(em_r, em_theta, em_phi)
-            emitter_radius2 = torch.as_tensor(emitter.radius * emitter.radius, dtype=self.dtype, device=self.device)
+            emitter_radius2 = torch.as_tensor(
+                [em.radius * em.radius for em in emitters],
+                dtype=self.dtype,
+                device=self.device,
+            )
 
         horizon_cut = self.horizon * 1.0005
         ray_step = torch.full((n,), float(cfg.step_size), dtype=self.dtype, device=self.device)
@@ -3221,16 +3388,24 @@ class KerrRayTracer:
 
             alpha_particle = torch.zeros_like(prev_r)
             particle_local = torch.zeros_like(valid_disk)
-            if emitter_pos is not None:
+            if emitter_pos is not None and emitter_radius2 is not None:
                 seg = next_xyz - prev_xyz
                 seg2 = torch.clamp(torch.sum(seg * seg, dim=-1), min=1.0e-9)
-                to_emitter = emitter_pos.view(1, 3) - prev_xyz
-                alpha_seg = torch.clamp(torch.sum(to_emitter * seg, dim=-1) / seg2, min=0.0, max=1.0)
-                xyz_particle = prev_xyz + alpha_seg.unsqueeze(-1) * seg
-                dist2 = torch.sum((xyz_particle - emitter_pos.view(1, 3)) * (xyz_particle - emitter_pos.view(1, 3)), dim=-1)
-                r_particle = self._ks_radius_from_xyz(xyz_particle)
-                particle_local = (dist2 <= emitter_radius2) & torch.isfinite(dist2) & (r_particle > horizon_cut)
-                alpha_particle = torch.where(particle_local, alpha_seg, alpha_particle)
+                alpha_best = torch.full_like(prev_r, 2.0)
+                for em_idx in range(int(emitter_pos.shape[0])):
+                    em_pos = emitter_pos[em_idx]
+                    em_r2 = emitter_radius2[em_idx]
+                    to_emitter = em_pos.view(1, 3) - prev_xyz
+                    alpha_seg = torch.clamp(torch.sum(to_emitter * seg, dim=-1) / seg2, min=0.0, max=1.0)
+                    xyz_particle = prev_xyz + alpha_seg.unsqueeze(-1) * seg
+                    delta = xyz_particle - em_pos.view(1, 3)
+                    dist2 = torch.sum(delta * delta, dim=-1)
+                    r_particle = self._ks_radius_from_xyz(xyz_particle)
+                    local_hit = (dist2 <= em_r2) & torch.isfinite(dist2) & (r_particle > horizon_cut)
+                    better = local_hit & (alpha_seg < alpha_best)
+                    alpha_best = torch.where(better, alpha_seg, alpha_best)
+                    particle_local = particle_local | local_hit
+                alpha_particle = torch.where(particle_local, alpha_best, alpha_particle)
 
             horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
             horizon_local = horizon_cross & (~valid_disk)
@@ -3371,7 +3546,7 @@ class KerrRayTracer:
         self,
         x_pixel_offset: float = 0.0,
         y_pixel_offset: float = 0.0,
-        emitter: PointEmitter | None = None,
+        emitter: EmitterInput = None,
         row_start: int = 0,
         row_end: int | None = None,
     ) -> tuple[
@@ -3423,14 +3598,19 @@ class KerrRayTracer:
         p_theta_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_phi_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
 
+        emitters = self._normalize_emitters(emitter)
         emitter_pos: torch.Tensor | None = None
-        emitter_radius2 = torch.as_tensor(0.0, dtype=self.dtype, device=self.device)
-        if emitter is not None:
-            em_r = torch.as_tensor(emitter.r, dtype=self.dtype, device=self.device)
-            em_theta = torch.as_tensor(emitter.theta, dtype=self.dtype, device=self.device)
-            em_phi = torch.as_tensor(emitter.phi, dtype=self.dtype, device=self.device)
+        emitter_radius2: torch.Tensor | None = None
+        if emitters:
+            em_r = torch.as_tensor([em.r for em in emitters], dtype=self.dtype, device=self.device)
+            em_theta = torch.as_tensor([em.theta for em in emitters], dtype=self.dtype, device=self.device)
+            em_phi = torch.as_tensor([em.phi for em in emitters], dtype=self.dtype, device=self.device)
             emitter_pos = self._bl_to_cartesian(em_r, em_theta, em_phi)
-            emitter_radius2 = torch.as_tensor(emitter.radius * emitter.radius, dtype=self.dtype, device=self.device)
+            emitter_radius2 = torch.as_tensor(
+                [em.radius * em.radius for em in emitters],
+                dtype=self.dtype,
+                device=self.device,
+            )
 
         horizon_cut = self.horizon * 1.0005
         step_h = float(cfg.step_size)
@@ -3555,17 +3735,25 @@ class KerrRayTracer:
             )
             alpha_particle = torch.zeros_like(prev_r)
             particle_local = torch.zeros_like(valid_disk)
-            if emitter_pos is not None:
+            if emitter_pos is not None and emitter_radius2 is not None:
                 prev_xyz = self._bl_to_cartesian(prev_r, prev_theta, prev_state[:, 3])
                 next_xyz = self._bl_to_cartesian(next_r, next_theta, next_state[:, 3])
                 seg = next_xyz - prev_xyz
                 seg2 = torch.clamp(torch.sum(seg * seg, dim=-1), min=1.0e-9)
-                to_emitter = emitter_pos.view(1, 3) - prev_xyz
-                alpha_seg = torch.clamp(torch.sum(to_emitter * seg, dim=-1) / seg2, min=0.0, max=1.0)
-                closest = prev_xyz + seg * alpha_seg.unsqueeze(-1)
-                dist2 = torch.sum((closest - emitter_pos.view(1, 3)) * (closest - emitter_pos.view(1, 3)), dim=-1)
-                particle_local = (dist2 <= emitter_radius2) & torch.isfinite(dist2)
-                alpha_particle = torch.where(particle_local, alpha_seg, alpha_particle)
+                alpha_best = torch.full_like(prev_r, 2.0)
+                for em_idx in range(int(emitter_pos.shape[0])):
+                    em_pos = emitter_pos[em_idx]
+                    em_r2 = emitter_radius2[em_idx]
+                    to_emitter = em_pos.view(1, 3) - prev_xyz
+                    alpha_seg = torch.clamp(torch.sum(to_emitter * seg, dim=-1) / seg2, min=0.0, max=1.0)
+                    closest = prev_xyz + seg * alpha_seg.unsqueeze(-1)
+                    delta = closest - em_pos.view(1, 3)
+                    dist2 = torch.sum(delta * delta, dim=-1)
+                    local_hit = (dist2 <= em_r2) & torch.isfinite(dist2)
+                    better = local_hit & (alpha_seg < alpha_best)
+                    alpha_best = torch.where(better, alpha_seg, alpha_best)
+                    particle_local = particle_local | local_hit
+                alpha_particle = torch.where(particle_local, alpha_best, alpha_particle)
 
             horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
             escape_cross = ((prev_r < escape_r) & (next_r >= escape_r)) | (next_r >= escape_r)
@@ -3691,11 +3879,15 @@ class KerrRayTracer:
         p_phi_particle: torch.Tensor,
         sky_theta: torch.Tensor,
         sky_phi: torch.Tensor,
-        emitter: PointEmitter | None = None,
+        emitter: EmitterInput = None,
     ) -> torch.Tensor:
         cfg = self.config
         n = hit_disk.shape[0]
         rgb = torch.zeros((n, 3), dtype=self.dtype, device=self.device)
+        emitter_ref: PointEmitter | None = None
+        emitters = self._normalize_emitters(emitter)
+        if emitters:
+            emitter_ref = emitters[0]
 
         if bool(escaped.any()):
             escaped_idx = torch.nonzero(escaped, as_tuple=False).squeeze(-1)
@@ -3705,23 +3897,23 @@ class KerrRayTracer:
                 sky = torch.tensor([0.012, 0.018, 0.030], dtype=self.dtype, device=self.device)
                 rgb[escaped_idx] = sky
 
-        if emitter is not None and bool(hit_emitter.any()):
+        if emitter_ref is not None and bool(hit_emitter.any()):
             em_idx = torch.nonzero(hit_emitter, as_tuple=False).squeeze(-1)
             p_t = p_t_particle[em_idx]
             p_r = p_r_particle[em_idx]
             p_th = p_theta_particle[em_idx]
             p_phi = p_phi_particle[em_idx]
 
-            u_t = torch.as_tensor(emitter.u_t, dtype=self.dtype, device=self.device)
-            u_r = torch.as_tensor(emitter.u_r, dtype=self.dtype, device=self.device)
-            u_th = torch.as_tensor(emitter.u_theta, dtype=self.dtype, device=self.device)
-            u_phi = torch.as_tensor(emitter.u_phi, dtype=self.dtype, device=self.device)
+            u_t = torch.as_tensor(emitter_ref.u_t, dtype=self.dtype, device=self.device)
+            u_r = torch.as_tensor(emitter_ref.u_r, dtype=self.dtype, device=self.device)
+            u_th = torch.as_tensor(emitter_ref.u_theta, dtype=self.dtype, device=self.device)
+            u_phi = torch.as_tensor(emitter_ref.u_phi, dtype=self.dtype, device=self.device)
 
             denom = -(u_t * p_t + u_r * p_r + u_th * p_th + u_phi * p_phi)
             g_factor = (-p_t) / torch.clamp(denom, min=1.0e-8)
             g_factor = torch.clamp(g_factor, min=0.0, max=3.5)
 
-            base = torch.as_tensor(emitter.color_rgb, dtype=self.dtype, device=self.device).unsqueeze(0).repeat(em_idx.shape[0], 1)
+            base = torch.as_tensor(emitter_ref.color_rgb, dtype=self.dtype, device=self.device).unsqueeze(0).repeat(em_idx.shape[0], 1)
             blue_shift = torch.clamp(g_factor - 1.0, min=0.0, max=1.5)
             red_shift = torch.clamp(1.0 - g_factor, min=0.0, max=1.0)
             color = base.clone()
@@ -3738,7 +3930,7 @@ class KerrRayTracer:
                 color[:, 2] = torch.clamp(rr * s + bb * c, min=0.0, max=1.8)
 
             intensity = torch.clamp(
-                torch.as_tensor(emitter.intensity, dtype=self.dtype, device=self.device) * torch.pow(g_factor, 2.0),
+                torch.as_tensor(emitter_ref.intensity, dtype=self.dtype, device=self.device) * torch.pow(g_factor, 2.0),
                 min=0.0,
                 max=8.0,
             )
@@ -3809,10 +4001,15 @@ class KerrRayTracer:
             disk_model = cfg.disk_model if cfg.physical_disk_model else "legacy"
             if disk_model == "physical_nt":
                 rin = torch.as_tensor(cfg.disk_inner_radius, dtype=self.dtype, device=self.device)
-                if cfg.disk_radial_profile == "nt_page_thorne":
-                    flux = self._novikov_thorne_flux_profile_page_thorne(r_profile, rin)
+                if self._disk_flux_lut_main is not None:
+                    rr_lut, flux_lut = self._disk_flux_lut_main
+                    r_sample = torch.clamp(r_profile, min=rr_lut[0], max=rr_lut[-1])
+                    flux = self._sample_flux_lut(r_sample, rr_lut, flux_lut)
                 else:
-                    flux = self._novikov_thorne_flux_profile(r_profile, rin)
+                    if cfg.disk_radial_profile == "nt_page_thorne":
+                        flux = self._novikov_thorne_flux_profile_page_thorne(r_profile, rin)
+                    else:
+                        flux = self._novikov_thorne_flux_profile(r_profile, rin)
                 flux_ref = torch.as_tensor(self._disk_flux_reference, dtype=self.dtype, device=self.device)
                 flux_norm = flux / torch.clamp(flux_ref, min=1.0e-8)
                 edge_weight = 0.22 + body + cfg.inner_edge_boost * inner_rim + cfg.outer_edge_boost * outer_rim
@@ -4045,6 +4242,92 @@ class KerrRayTracer:
             row_scale = torch.clamp(expanded, min=float(min_scale), max=1.0)
         return row_scale
 
+    def _roi_supersample_offsets(self) -> list[tuple[float, float]]:
+        j = float(self.config.roi_supersample_jitter)
+        base = [
+            (+j, +j),
+            (-j, +j),
+            (+j, -j),
+            (-j, -j),
+            (+0.5 * j, -0.5 * j),
+            (-0.5 * j, +0.5 * j),
+            (+0.75 * j, 0.0),
+            (0.0, +0.75 * j),
+        ]
+        count = max(1, min(len(base), int(self.config.roi_supersample_samples)))
+        return base[:count]
+
+    def _build_roi_supersample_mask(self, rgb: torch.Tensor) -> torch.Tensor:
+        h = int(rgb.shape[0])
+        w = int(rgb.shape[1])
+        if h < 64 or w < 64:
+            return torch.zeros((h, w), dtype=torch.bool, device=self.device)
+
+        lum = 0.2126 * rgb[:, :, 0] + 0.7152 * rgb[:, :, 1] + 0.0722 * rgb[:, :, 2]
+        gx = torch.zeros_like(lum)
+        gy = torch.zeros_like(lum)
+        gx[:, :-1] = torch.abs(lum[:, 1:] - lum[:, :-1])
+        gy[:-1, :] = torch.abs(lum[1:, :] - lum[:-1, :])
+        grad = torch.maximum(gx, gy)
+
+        try:
+            q = float(torch.quantile(grad.reshape(-1), float(self.config.roi_supersample_threshold)).item())
+        except Exception:
+            q = 0.0
+        grad_mask = grad >= max(q, 1.0e-5)
+
+        yy = torch.linspace(-1.0, 1.0, h, dtype=self.dtype, device=self.device).view(h, 1)
+        xx = torch.linspace(-1.0, 1.0, w, dtype=self.dtype, device=self.device).view(1, w)
+        rr = torch.sqrt(xx * xx + yy * yy)
+        ring = torch.abs(rr - 0.34) <= 0.12
+        core = rr <= 0.18
+        roi = grad_mask | ring | core
+
+        roi_f = roi.to(self.dtype).unsqueeze(0).unsqueeze(0)
+        roi_f = F.max_pool2d(roi_f, kernel_size=5, stride=1, padding=2)
+        return roi_f[0, 0] > 0.0
+
+    def _finalize_rgb_cuda_graph(self, rgb: torch.Tensor) -> torch.Tensor:
+        def _fallback(x: torch.Tensor) -> torch.Tensor:
+            post = self._apply_postprocess_pipeline(x)
+            return torch.clamp(post * 255.0, min=0.0, max=255.0).to(torch.uint8)
+
+        if self.device.type != "cuda":
+            return _fallback(rgb)
+        if self._cuda_finalize_graph_failed:
+            return _fallback(rgb)
+
+        use_graph = bool(self.config.cuda_graph_finalize)
+        if (not use_graph) or (not hasattr(torch.cuda, "CUDAGraph")):
+            return _fallback(rgb)
+
+        if (not self._cuda_finalize_graph_ready) or self._cuda_finalize_static_in is None or self._cuda_finalize_static_out is None:
+            try:
+                static_in = torch.empty_like(rgb)
+                stream = torch.cuda.Stream(device=self.device)
+                stream.wait_stream(torch.cuda.current_stream(device=self.device))
+                with torch.cuda.stream(stream):
+                    static_in.copy_(rgb)
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph):
+                        post = self._apply_postprocess_pipeline(static_in)
+                        static_out = torch.clamp(post * 255.0, min=0.0, max=255.0).to(torch.uint8)
+                torch.cuda.current_stream(device=self.device).wait_stream(stream)
+                self._cuda_finalize_graph = graph
+                self._cuda_finalize_static_in = static_in
+                self._cuda_finalize_static_out = static_out
+                self._cuda_finalize_graph_ready = True
+            except Exception:
+                self._cuda_finalize_graph_failed = True
+                return _fallback(rgb)
+
+        assert self._cuda_finalize_graph is not None
+        assert self._cuda_finalize_static_in is not None
+        assert self._cuda_finalize_static_out is not None
+        self._cuda_finalize_static_in.copy_(rgb)
+        self._cuda_finalize_graph.replay()
+        return self._cuda_finalize_static_out.clone()
+
     def _format_eta(self, seconds: float) -> str:
         secs = max(0, int(round(seconds)))
         hours, rem = divmod(secs, 3600)
@@ -4109,8 +4392,17 @@ class KerrRayTracer:
         self,
         x_pixel_offset: float = 0.0,
         y_pixel_offset: float = 0.0,
-        emitter: PointEmitter | None = None,
+        emitter: EmitterInput = None,
     ) -> RenderOutput:
+        emitter_list = self._normalize_emitters(emitter)
+        emitter_payload: EmitterInput
+        if not emitter_list:
+            emitter_payload = None
+        elif len(emitter_list) == 1:
+            emitter_payload = emitter_list[0]
+        else:
+            emitter_payload = emitter_list
+
         amp_ctx = nullcontext()
         if self.config.mixed_precision and self.device.type in {"cuda", "mps"}:
             try:
@@ -4121,7 +4413,7 @@ class KerrRayTracer:
         if self.config.coordinate_system in {"kerr_schild", "generalized_doran"}:
             trace_fn = self._trace_kerr_schild
         else:
-            if emitter is not None:
+            if emitter_payload is not None:
                 if self.use_mps_optimized_kernel and self.config.allow_mps_emitter_fastpath:
                     trace_fn = self._trace_mps_optimized
                 else:
@@ -4204,7 +4496,7 @@ class KerrRayTracer:
 
         def _shade_from_trace(trace: tuple[torch.Tensor, ...]) -> torch.Tensor:
             with amp_ctx:
-                return self._shade(*trace[:-1], emitter=emitter)
+                return self._shade(*trace[:-1], emitter=emitter_payload)
 
         cfg_render_base = self.config
         row_blocks: list[tuple[int, int]]
@@ -4217,20 +4509,22 @@ class KerrRayTracer:
             row_start: int,
             row_end: int,
             use_meridian: bool,
+            x_offset_extra: float = 0.0,
+            y_offset_extra: float = 0.0,
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
             rows = row_end - row_start
             if use_meridian:
                 trace_a = trace_fn(
-                    x_pixel_offset=x_pixel_offset - 0.35,
-                    y_pixel_offset=y_pixel_offset,
-                    emitter=emitter,
+                    x_pixel_offset=x_pixel_offset + x_offset_extra - 0.35,
+                    y_pixel_offset=y_pixel_offset + y_offset_extra,
+                    emitter=emitter_payload,
                     row_start=row_start,
                     row_end=row_end,
                 )
                 trace_b = trace_fn(
-                    x_pixel_offset=x_pixel_offset + 0.35,
-                    y_pixel_offset=y_pixel_offset,
-                    emitter=emitter,
+                    x_pixel_offset=x_pixel_offset + x_offset_extra + 0.35,
+                    y_pixel_offset=y_pixel_offset + y_offset_extra,
+                    emitter=emitter_payload,
                     row_start=row_start,
                     row_end=row_end,
                 )
@@ -4246,9 +4540,9 @@ class KerrRayTracer:
                 )
 
             trace = trace_fn(
-                x_pixel_offset=x_pixel_offset,
-                y_pixel_offset=y_pixel_offset,
-                emitter=emitter,
+                x_pixel_offset=x_pixel_offset + x_offset_extra,
+                y_pixel_offset=y_pixel_offset + y_offset_extra,
+                emitter=emitter_payload,
                 row_start=row_start,
                 row_end=row_end,
             )
@@ -4392,6 +4686,58 @@ class KerrRayTracer:
             progress_stop.set()
             ticker_thread.join(timeout=1.5)
 
+        roi_enabled = bool(
+            cfg_render_base.roi_supersampling
+            and emitter_payload is None
+            and h >= 96
+            and w >= 96
+        )
+        if roi_enabled:
+            try:
+                self.config = cfg_render_base
+                roi_mask = self._build_roi_supersample_mask(rgb)
+                roi_rows = torch.nonzero(roi_mask.any(dim=1), as_tuple=False).squeeze(-1)
+                if int(roi_rows.numel()) > 0:
+                    row_ranges: list[tuple[int, int]] = []
+                    start_row = int(roi_rows[0].item())
+                    prev_row = start_row
+                    for row_t in roi_rows[1:]:
+                        row = int(row_t.item())
+                        if row == prev_row + 1:
+                            prev_row = row
+                            continue
+                        row_ranges.append((start_row, prev_row + 1))
+                        start_row = row
+                        prev_row = row
+                    row_ranges.append((start_row, prev_row + 1))
+
+                    offsets = self._roi_supersample_offsets()
+                    for row_start, row_end in row_ranges:
+                        mask_block = roi_mask[row_start:row_end, :].unsqueeze(-1)
+                        if not bool(mask_block.any()):
+                            continue
+                        accum = rgb[row_start:row_end, :, :].clone()
+                        for x_off, y_off in offsets:
+                            block_rgb, _, _, _, _, local_steps_used = _trace_and_shade_block(
+                                row_start=row_start,
+                                row_end=row_end,
+                                use_meridian=bool(cfg_render_base.meridian_supersample),
+                                x_offset_extra=float(x_off),
+                                y_offset_extra=float(y_off),
+                            )
+                            accum = accum + block_rgb
+                            steps_used = max(steps_used, int(local_steps_used))
+                        refined = accum / float(1 + len(offsets))
+                        rgb[row_start:row_end, :, :] = torch.where(
+                            mask_block,
+                            refined,
+                            rgb[row_start:row_end, :, :],
+                        )
+            except Exception:
+                pass
+            finally:
+                self.config = cfg_render_base
+
         if self.config.destripe_meridian:
             seam_mask = escaped | hit_horizon
             rgb = self._destripe_meridian(
@@ -4400,9 +4746,8 @@ class KerrRayTracer:
                 force=False,
             )
 
-        rgb = self._apply_postprocess_pipeline(rgb)
-
-        out = torch.clamp(rgb * 255.0, min=0.0, max=255.0).to(torch.uint8).cpu().contiguous().numpy()
+        out_t = self._finalize_rgb_cuda_graph(rgb)
+        out = out_t.cpu().contiguous().numpy()
         image = Image.fromarray(out, mode="RGB")
 
         stats = RenderStats(
@@ -4414,7 +4759,7 @@ class KerrRayTracer:
         )
         return RenderOutput(image=image, stats=stats)
 
-    def render_to_file(self, output_path: str | Path | None = None, emitter: PointEmitter | None = None) -> RenderStats:
+    def render_to_file(self, output_path: str | Path | None = None, emitter: EmitterInput = None) -> RenderStats:
         target = Path(output_path or self.config.output)
         target.parent.mkdir(parents=True, exist_ok=True)
         result = self.render(emitter=emitter)

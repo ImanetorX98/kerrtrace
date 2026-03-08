@@ -176,8 +176,45 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--video-codec", choices=["h264", "h265_10bit"])
     parser.add_argument("--video-crf", type=int)
     parser.add_argument("--render-tile-rows", type=int, help="Render in row tiles (0 disables tiling)")
+    parser.add_argument(
+        "--disable-cuda-graph-finalize",
+        action="store_true",
+        help="Disable CUDA graph capture for the final image postprocess path",
+    )
+    parser.add_argument(
+        "--enable-cuda-graph-finalize",
+        action="store_true",
+        help="Enable CUDA graph capture for the final image postprocess path",
+    )
     parser.add_argument("--disable-camera-fastpath", action="store_true", help="Use legacy camera-ray initialization path")
     parser.add_argument("--enable-camera-fastpath", action="store_true", help="Use optimized camera-ray initialization path")
+    parser.add_argument(
+        "--enable-roi-supersampling",
+        action="store_true",
+        help="Enable selective ROI supersampling around high-gradient/ring regions",
+    )
+    parser.add_argument(
+        "--disable-roi-supersampling",
+        action="store_true",
+        help="Disable selective ROI supersampling",
+    )
+    parser.add_argument(
+        "--roi-supersample-threshold",
+        type=float,
+        help="Gradient quantile used to detect supersampling ROI [0.50, 0.999]",
+    )
+    parser.add_argument(
+        "--roi-supersample-jitter",
+        type=float,
+        help="Subpixel jitter amplitude for ROI supersampling (0, 1]",
+    )
+    parser.add_argument(
+        "--roi-supersample-samples",
+        type=int,
+        help="Number of extra ROI supersample passes [1, 8]",
+    )
+    parser.add_argument("--disable-persistent-cache", action="store_true", help="Disable persistent disk cache for LUT/cubemap")
+    parser.add_argument("--persistent-cache-dir", type=str, help="Persistent disk cache directory (default: out/cache)")
     parser.add_argument(
         "--enable-adaptive-spatial-sampling",
         action="store_true",
@@ -291,6 +328,21 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable ffmpeg stream encoding when compatible with requested output mode",
     )
+    parser.add_argument(
+        "--disable-stream-encode-async",
+        action="store_true",
+        help="Disable async ffmpeg writer thread and write frames synchronously",
+    )
+    parser.add_argument(
+        "--enable-stream-encode-async",
+        action="store_true",
+        help="Enable async ffmpeg writer thread during stream encoding",
+    )
+    parser.add_argument(
+        "--stream-encode-queue-size",
+        type=int,
+        help="Buffered frame queue length for async stream encoding [1, 64]",
+    )
     parser.add_argument("--frames-dir", type=str, help="Directory for frame PNG sequence")
     parser.add_argument("--keep-frames", action="store_true", help="Keep frame PNG files after encoding")
     parser.add_argument("--resume-frames", action="store_true", help="Reuse existing frame_XXXXX.png files and render only missing ones")
@@ -384,11 +436,16 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "video_codec": args.video_codec,
         "video_crf": args.video_crf,
         "render_tile_rows": args.render_tile_rows,
+        "roi_supersample_threshold": args.roi_supersample_threshold,
+        "roi_supersample_jitter": args.roi_supersample_jitter,
+        "roi_supersample_samples": args.roi_supersample_samples,
+        "persistent_cache_dir": args.persistent_cache_dir,
         "adaptive_spatial_preview_steps": args.adaptive_spatial_preview_steps,
         "adaptive_spatial_min_scale": args.adaptive_spatial_min_scale,
         "adaptive_spatial_quantile": args.adaptive_spatial_quantile,
         "progress_backend": args.progress_backend,
         "animation_workers": args.animation_workers,
+        "stream_encode_queue_size": args.stream_encode_queue_size,
         "quality_lock_psnr_min": args.quality_lock_psnr_min,
         "quality_lock_ssim_min": args.quality_lock_ssim_min,
         "quality_lock_sample_width": args.quality_lock_sample_width,
@@ -449,6 +506,16 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["camera_fastpath"] = False
     if args.enable_camera_fastpath:
         updates["camera_fastpath"] = True
+    if args.disable_cuda_graph_finalize:
+        updates["cuda_graph_finalize"] = False
+    if args.enable_cuda_graph_finalize:
+        updates["cuda_graph_finalize"] = True
+    if args.enable_roi_supersampling:
+        updates["roi_supersampling"] = True
+    if args.disable_roi_supersampling:
+        updates["roi_supersampling"] = False
+    if args.disable_persistent_cache:
+        updates["persistent_cache_enabled"] = False
     if args.enable_adaptive_spatial_sampling:
         updates["adaptive_spatial_sampling"] = True
     if args.disable_adaptive_spatial_sampling:
@@ -463,6 +530,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["show_progress_bar"] = False
     if args.enable_progress_bar:
         updates["show_progress_bar"] = True
+    if args.disable_stream_encode_async:
+        updates["stream_encode_async"] = False
+    if args.enable_stream_encode_async:
+        updates["stream_encode_async"] = True
     return replace(base, **updates)
 
 
@@ -658,6 +729,8 @@ def main() -> int:
             adaptive_frame_steps=not args.disable_adaptive_frame_steps,
             adaptive_frame_steps_min_scale=args.adaptive_frame_steps_min_scale,
             stream_encode=stream_encode,
+            stream_encode_async=config.stream_encode_async,
+            stream_encode_queue_size=config.stream_encode_queue_size,
         )
         print(f"Saved animation: {stats.output_path}")
         print(f"Frames: {stats.frames} | FPS: {stats.fps} | Time: {stats.elapsed_seconds:.2f}s")
