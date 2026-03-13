@@ -15,6 +15,10 @@ from PIL import Image
 import torch
 import torch.nn.functional as F
 try:
+    import imageio.v3 as iio
+except Exception:
+    iio = None
+try:
     import click
 except Exception:
     click = None
@@ -32,6 +36,38 @@ from .geometry import (
     inverse_metric_derivatives,
     metric_components,
 )
+
+
+def _write_radiance_hdr(path: Path, rgb: np.ndarray) -> None:
+    """
+    Minimal Radiance RGBE writer fallback.
+
+    Expects float array in HxWx3 with non-negative values.
+    """
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("Radiance HDR writer expects HxWx3 array")
+    h, w, _ = rgb.shape
+    arr = np.clip(rgb.astype(np.float32, copy=False), 0.0, None)
+    maxc = np.max(arr, axis=2)
+    rgbe = np.zeros((h, w, 4), dtype=np.uint8)
+    nonzero = maxc > 1.0e-32
+    if np.any(nonzero):
+        m, e = np.frexp(maxc[nonzero])
+        scale = (m * 256.0) / np.maximum(maxc[nonzero], 1.0e-32)
+        rgb_scaled = arr[nonzero] * scale[:, None]
+        rgbe_nonzero = np.clip(rgb_scaled, 0.0, 255.0).astype(np.uint8)
+        rgbe[nonzero, 0:3] = rgbe_nonzero
+        rgbe[nonzero, 3] = np.clip(e + 128, 0, 255).astype(np.uint8)
+
+    header = (
+        "#?RADIANCE\n"
+        "FORMAT=32-bit_rle_rgbe\n"
+        "\n"
+        f"-Y {h} +X {w}\n"
+    ).encode("ascii")
+    with path.open("wb") as fh:
+        fh.write(header)
+        fh.write(rgbe.tobytes())
 
 
 @dataclass
@@ -70,6 +106,7 @@ class KerrRayTracer:
     _cubemap_cache: dict[tuple[object, ...], tuple[torch.Tensor, ...]] = {}
     _hdri_cache: dict[tuple[object, ...], torch.Tensor] = {}
     _nt_page_thorne_cache: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor]] = {}
+    _keplerian_omega_cache: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor]] = {}
     _disk_flux_reference_cache: dict[tuple[object, ...], float] = {}
     _camera_1d_cache: dict[
         tuple[object, ...],
@@ -159,7 +196,11 @@ class KerrRayTracer:
         self._cuda_finalize_static_in: torch.Tensor | None = None
         self._cuda_finalize_static_out: torch.Tensor | None = None
         self._disk_flux_lut_main: tuple[torch.Tensor, torch.Tensor] | None = None
+        self._disk_omega_lut_main: tuple[torch.Tensor, torch.Tensor] | None = None
+        self._last_rgb_float: torch.Tensor | None = None
         self._rhs_fn = self._rhs
+        self._rk4_bl_step_fn: Callable[[torch.Tensor, float], torch.Tensor] = self._rk4_step
+        self._rk4_ks_step_fn: Callable[[torch.Tensor, float], torch.Tensor] = self._rk4_step_kerr_schild
         if (self.config.compile_rhs or self.use_mps_optimized_kernel) and self.config.coordinate_system == "boyer_lindquist":
             compiled_unbound = self._get_compiled_unbound(
                 (
@@ -172,6 +213,19 @@ class KerrRayTracer:
             )
             if compiled_unbound is not None:
                 self._rhs_fn = lambda state, _fn=compiled_unbound, _self=self: _fn(_self, state)
+            compiled_rk4_bl_unbound = self._get_compiled_unbound(
+                (
+                    "rk4_bl_unbound",
+                    "reduce-overhead",
+                    self.device.type,
+                    str(self.dtype),
+                ),
+                KerrRayTracer._rk4_step,
+            )
+            if compiled_rk4_bl_unbound is not None:
+                self._rk4_bl_step_fn = (
+                    lambda state, h, _fn=compiled_rk4_bl_unbound, _self=self: _fn(_self, state, h)
+                )
         if self.config.compile_rhs and self.is_ks_family and (not self.ks_use_analytic_rhs):
             compiled_ks_unbound = self._get_compiled_unbound(
                 (
@@ -185,6 +239,20 @@ class KerrRayTracer:
             )
             if compiled_ks_unbound is not None:
                 self._rhs_kerr_schild_fn = lambda state, _fn=compiled_ks_unbound, _self=self: _fn(_self, state)
+            compiled_rk4_ks_unbound = self._get_compiled_unbound(
+                (
+                    "rk4_ks_unbound",
+                    "reduce-overhead",
+                    self.device.type,
+                    str(self.dtype),
+                    self.config.metric_model,
+                ),
+                KerrRayTracer._rk4_step_kerr_schild,
+            )
+            if compiled_rk4_ks_unbound is not None:
+                self._rk4_ks_step_fn = (
+                    lambda state, h, _fn=compiled_rk4_ks_unbound, _self=self: _fn(_self, state, h)
+                )
 
         self._hdri_tex: torch.Tensor | None = None
         if self.config.background_mode == "hdri" and self.config.hdri_path:
@@ -222,6 +290,12 @@ class KerrRayTracer:
                     self._disk_flux_lut_main = self._build_nt_general_lut(rin=rin0, rmax=rout0)
             except Exception:
                 self._disk_flux_lut_main = None
+            try:
+                rin0 = float(self.config.disk_inner_radius)
+                rout0 = float(self.config.disk_outer_radius)
+                self._disk_omega_lut_main = self._build_keplerian_omega_lut(rin=rin0, rmax=rout0)
+            except Exception:
+                self._disk_omega_lut_main = None
         self._disk_flux_reference = self._compute_disk_flux_reference()
 
     def set_observer(
@@ -231,6 +305,7 @@ class KerrRayTracer:
         observer_azimuth_deg: float | None = None,
         observer_roll_deg: float | None = None,
         max_steps: int | None = None,
+        disk_layer_global_phase: float | None = None,
     ) -> None:
         """
         Lightweight per-frame camera update used by animation/TAA loops.
@@ -246,6 +321,8 @@ class KerrRayTracer:
             updates["observer_roll_deg"] = float(observer_roll_deg)
         if max_steps is not None:
             updates["max_steps"] = int(max_steps)
+        if disk_layer_global_phase is not None:
+            updates["disk_layer_global_phase"] = float(disk_layer_global_phase)
         if not updates:
             return
 
@@ -1387,6 +1464,14 @@ class KerrRayTracer:
         k4 = self._rhs_kerr_schild(state + h * k3)
         return state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
+    def _rk4_step_kerr_schild_with_k1(self, state: torch.Tensor, h: float) -> tuple[torch.Tensor, torch.Tensor]:
+        k1 = self._rhs_kerr_schild(state)
+        k2 = self._rhs_kerr_schild(state + 0.5 * h * k1)
+        k3 = self._rhs_kerr_schild(state + 0.5 * h * k2)
+        k4 = self._rhs_kerr_schild(state + h * k3)
+        nxt = state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        return nxt, k1
+
     def _rk45_adaptive_step_kerr_schild(
         self,
         state: torch.Tensor,
@@ -1639,6 +1724,67 @@ class KerrRayTracer:
         nxt = state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
         nxt[:, 1] = torch.clamp(nxt[:, 1], min=1.0e-3)
         return self._regularize_angular_state(nxt)
+
+    def _rk4_step_with_k1(self, state: torch.Tensor, h: float) -> tuple[torch.Tensor, torch.Tensor]:
+        k1 = self._rhs_fn(state)
+        k2 = self._rhs_fn(state + 0.5 * h * k1)
+        k3 = self._rhs_fn(state + 0.5 * h * k2)
+        k4 = self._rhs_fn(state + h * k3)
+        nxt = state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        nxt[:, 1] = torch.clamp(nxt[:, 1], min=1.0e-3)
+        return self._regularize_angular_state(nxt), k1
+
+    def _event_aware_step_factor_bl(
+        self,
+        r: torch.Tensor,
+        theta: torch.Tensor,
+        horizon_cut: torch.Tensor,
+    ) -> torch.Tensor:
+        cfg = self.config
+        horizon_band = torch.as_tensor(
+            max(0.45, 2.0 * float(cfg.adaptive_step_max)),
+            dtype=self.dtype,
+            device=self.device,
+        )
+        dist_h = torch.abs(r - horizon_cut)
+        scale_h = 0.45 + 0.55 * torch.clamp(dist_h / horizon_band, min=0.0, max=1.0)
+
+        if cfg.thick_disk and cfg.disk_thickness_ratio > 0.0:
+            z = r * torch.cos(theta)
+            h_disk, _ = self._disk_half_thickness_and_slope(r)
+            dist_d = torch.abs(torch.abs(z) - h_disk)
+            band_d = torch.clamp(0.40 * h_disk + 0.05 * r, min=0.04)
+        else:
+            dist_d = torch.abs(r * torch.cos(theta))
+            band_d = torch.clamp(0.08 * r + 0.06, min=0.05)
+        scale_d = 0.48 + 0.52 * torch.clamp(dist_d / torch.clamp(band_d, min=1.0e-6), min=0.0, max=1.0)
+        return torch.clamp(torch.minimum(scale_h, scale_d), min=0.45, max=1.0)
+
+    def _event_aware_step_factor_ks(
+        self,
+        xyz: torch.Tensor,
+        horizon_cut: torch.Tensor,
+    ) -> torch.Tensor:
+        cfg = self.config
+        r = self._ks_radius_from_xyz(xyz)
+        horizon_band = torch.as_tensor(
+            max(0.45, 2.0 * float(cfg.adaptive_step_max)),
+            dtype=self.dtype,
+            device=self.device,
+        )
+        dist_h = torch.abs(r - horizon_cut)
+        scale_h = 0.45 + 0.55 * torch.clamp(dist_h / horizon_band, min=0.0, max=1.0)
+
+        z = torch.abs(xyz[:, 2])
+        if cfg.thick_disk and cfg.disk_thickness_ratio > 0.0:
+            h_disk, _ = self._disk_half_thickness_and_slope(r)
+            dist_d = torch.abs(z - h_disk)
+            band_d = torch.clamp(0.40 * h_disk + 0.05 * r, min=0.04)
+        else:
+            dist_d = z
+            band_d = torch.clamp(0.08 * r + 0.06, min=0.05)
+        scale_d = 0.48 + 0.52 * torch.clamp(dist_d / torch.clamp(band_d, min=1.0e-6), min=0.0, max=1.0)
+        return torch.clamp(torch.minimum(scale_h, scale_d), min=0.45, max=1.0)
 
     def _rk45_adaptive_step(
         self,
@@ -1996,6 +2142,159 @@ class KerrRayTracer:
         color = torch.where(m3.unsqueeze(-1), c34, color)
         return color
 
+    def _interstellar_warm_palette(self, t: torch.Tensor) -> torch.Tensor:
+        t = torch.clamp(t, min=0.0, max=1.0)
+        c0 = torch.tensor([1.00, 0.95, 0.82], dtype=self.dtype, device=self.device)
+        c1 = torch.tensor([1.00, 0.82, 0.42], dtype=self.dtype, device=self.device)
+        c2 = torch.tensor([0.97, 0.56, 0.20], dtype=self.dtype, device=self.device)
+        c3 = torch.tensor([0.78, 0.28, 0.10], dtype=self.dtype, device=self.device)
+        c4 = torch.tensor([0.42, 0.08, 0.03], dtype=self.dtype, device=self.device)
+
+        color = torch.zeros((t.shape[0], 3), dtype=self.dtype, device=self.device)
+
+        m0 = t < 0.20
+        s0 = torch.clamp(t / 0.20, min=0.0, max=1.0).unsqueeze(-1)
+        c01 = c0 + (c1 - c0) * s0
+        color = torch.where(m0.unsqueeze(-1), c01, color)
+
+        m1 = (t >= 0.20) & (t < 0.46)
+        s1 = torch.clamp((t - 0.20) / 0.26, min=0.0, max=1.0).unsqueeze(-1)
+        c12 = c1 + (c2 - c1) * s1
+        color = torch.where(m1.unsqueeze(-1), c12, color)
+
+        m2 = (t >= 0.46) & (t < 0.74)
+        s2 = torch.clamp((t - 0.46) / 0.28, min=0.0, max=1.0).unsqueeze(-1)
+        c23 = c2 + (c3 - c2) * s2
+        color = torch.where(m2.unsqueeze(-1), c23, color)
+
+        m3 = t >= 0.74
+        s3 = torch.clamp((t - 0.74) / 0.26, min=0.0, max=1.0).unsqueeze(-1)
+        c34 = c3 + (c4 - c3) * s3
+        color = torch.where(m3.unsqueeze(-1), c34, color)
+        return torch.clamp(color, min=0.0, max=1.2)
+
+    def _disk_layered_palette_color(
+        self,
+        x: torch.Tensor,
+        phi_disk: torch.Tensor,
+        t_disk: torch.Tensor,
+        layer_complexity: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        cfg = self.config
+        n_layers = max(2, int(cfg.disk_layer_count))
+        if cfg.disk_adaptive_stratification:
+            lmin = max(2, int(cfg.disk_adaptive_layers_min))
+            lmax = max(lmin, int(cfg.disk_adaptive_layers_max))
+            if layer_complexity is None:
+                layer_complexity = torch.pow(torch.clamp(1.0 - x, min=0.0, max=1.0), 0.70)
+            layer_complexity = torch.clamp(layer_complexity, min=0.0, max=1.0)
+            mix = torch.as_tensor(cfg.disk_adaptive_complexity_mix, dtype=self.dtype, device=self.device)
+            radial_ref = torch.pow(torch.clamp(1.0 - x, min=0.0, max=1.0), 0.70)
+            c_eff = torch.clamp(mix * layer_complexity + (1.0 - mix) * radial_ref, min=0.0, max=1.0)
+            n_layers_t = torch.clamp(
+                torch.as_tensor(float(lmin), dtype=self.dtype, device=self.device)
+                + torch.as_tensor(float(lmax - lmin), dtype=self.dtype, device=self.device) * c_eff,
+                min=float(lmin),
+                max=float(lmax),
+            )
+        else:
+            n_layers_t = torch.full_like(x, float(n_layers))
+        rin = torch.as_tensor(cfg.disk_inner_radius, dtype=self.dtype, device=self.device)
+        span = torch.as_tensor(
+            max(1.0e-6, cfg.disk_outer_radius - cfg.disk_inner_radius),
+            dtype=self.dtype,
+            device=self.device,
+        )
+
+        layer_pos = torch.clamp(x * n_layers_t, min=0.0)
+        layer_pos = torch.minimum(layer_pos, n_layers_t - 1.0e-6)
+        layer_idx = torch.floor(layer_pos)
+        layer_idx_next = torch.minimum(layer_idx + 1.0, n_layers_t - 1.0)
+        layer_frac = torch.clamp(layer_pos - layer_idx, min=0.0, max=1.0)
+
+        u0 = (layer_idx + 0.5) / n_layers_t
+        u1 = (layer_idx_next + 0.5) / n_layers_t
+        c0 = self._interstellar_warm_palette(u0)
+        c1 = self._interstellar_warm_palette(u1)
+        base_color = c0 + (c1 - c0) * layer_frac.unsqueeze(-1)
+
+        layer_r = rin + u0 * span
+        omega_layer = self._disk_keplerian_omega(layer_r)
+        flow_phi = (
+            phi_disk
+            - omega_layer
+            * t_disk
+            * torch.as_tensor(cfg.disk_layer_time_scale, dtype=self.dtype, device=self.device)
+            - torch.as_tensor(cfg.disk_layer_global_phase, dtype=self.dtype, device=self.device)
+        )
+        phase = (
+            torch.as_tensor(cfg.disk_layer_pattern_count, dtype=self.dtype, device=self.device) * flow_phi
+            + (2.0 * math.pi) * layer_idx / n_layers_t
+        )
+        wave = 0.5 + 0.5 * torch.sin(phase)
+        wave2 = 0.5 + 0.5 * torch.sin(0.73 * phase + 8.0 * u0)
+        contrast = torch.as_tensor(cfg.disk_layer_pattern_contrast, dtype=self.dtype, device=self.device)
+        band = (1.0 - contrast) + contrast * (0.28 + 0.72 * wave * (0.82 + 0.18 * wave2))
+
+        # Add coherent rotating inhomogeneities per layer as azimuthal
+        # rectangular segments, so disk rotation is readable in animation.
+        accident_strength = torch.as_tensor(cfg.disk_layer_accident_strength, dtype=self.dtype, device=self.device)
+        if float(cfg.disk_layer_accident_strength) > 0.0:
+            accident_count = torch.as_tensor(cfg.disk_layer_accident_count, dtype=self.dtype, device=self.device)
+            accident_sharp = torch.as_tensor(cfg.disk_layer_accident_sharpness, dtype=self.dtype, device=self.device)
+            inner_weight = torch.pow(torch.clamp(1.0 - u0, min=0.0, max=1.0), 0.35)
+            seg_count = torch.clamp(2.0 + 4.0 * accident_count, min=2.0, max=512.0)
+            phi_unit = torch.remainder(flow_phi / (2.0 * math.pi), 1.0)
+            seg_pos = phi_unit * seg_count
+            seg_idx = torch.floor(seg_pos)
+            seg_frac = seg_pos - seg_idx
+
+            edge = torch.clamp(0.10 / torch.clamp(accident_sharp, min=1.0), min=0.004, max=0.08)
+            duty = torch.clamp(0.78 - 0.055 * torch.clamp(accident_sharp - 1.0, min=0.0), min=0.14, max=0.88)
+            rise = torch.clamp(seg_frac / torch.clamp(edge, min=1.0e-4), min=0.0, max=1.0)
+            fall = torch.clamp((duty - seg_frac) / torch.clamp(edge, min=1.0e-4), min=0.0, max=1.0)
+            in_rect = torch.where(seg_frac < duty, torch.minimum(rise, fall), torch.zeros_like(seg_frac))
+
+            seg_hash_a = torch.frac(
+                torch.sin((layer_idx + 1.0) * 127.1 + (seg_idx + 1.0) * 311.7 + 17.0 * u0) * 43758.5453
+            )
+            seg_hash_b = torch.frac(
+                torch.sin((layer_idx + 1.0) * 269.5 + (seg_idx + 1.0) * 183.3 + 11.0 * u0) * 24634.6345
+            )
+            accident_profile = torch.clamp(in_rect * (0.35 + 0.65 * seg_hash_a), min=0.0, max=1.0)
+            accident_boost = torch.clamp(
+                1.0 + accident_strength * inner_weight * (1.60 * accident_profile - 0.30),
+                min=0.45,
+                max=3.2,
+            )
+            band = band * accident_boost
+            tint_cool = torch.tensor([0.88, 0.97, 1.20], dtype=self.dtype, device=self.device).view(1, 3)
+            tint_warm = torch.tensor([1.22, 1.08, 0.86], dtype=self.dtype, device=self.device).view(1, 3)
+            accident_tint = tint_cool + (tint_warm - tint_cool) * seg_hash_b.unsqueeze(-1)
+        else:
+            accident_profile = torch.zeros_like(band)
+            inner_weight = torch.ones_like(band)
+            accident_tint = torch.ones((band.shape[0], 3), dtype=self.dtype, device=self.device)
+
+        odd = torch.remainder(layer_idx, 2.0)
+        tint_shift = (odd * 2.0 - 1.0) * 0.03
+        tint = torch.stack(
+            [
+                torch.clamp(1.0 + 0.5 * tint_shift, min=0.85, max=1.15),
+                torch.clamp(1.0 - 0.2 * tint_shift, min=0.85, max=1.15),
+                torch.clamp(1.0 - 0.8 * tint_shift, min=0.80, max=1.20),
+            ],
+            dim=-1,
+        )
+
+        layer_color = base_color * tint * band.unsqueeze(-1)
+        accident_mix = (0.28 * accident_strength * inner_weight * accident_profile).unsqueeze(-1)
+        layer_color = layer_color * (1.0 + accident_mix * (accident_tint - 1.0))
+        inner_hot = torch.exp(-torch.pow(torch.clamp(u0 / 0.18, min=0.0), 2.0)).unsqueeze(-1)
+        hot_tint = torch.tensor([1.00, 0.92, 0.70], dtype=self.dtype, device=self.device).view(1, 3)
+        layer_color = layer_color + 0.20 * inner_hot * hot_tint
+        return torch.clamp(layer_color, min=0.0, max=1.5)
+
     def _blackbody_rgb(self, temperature_kelvin: torch.Tensor) -> torch.Tensor:
         t = torch.clamp(temperature_kelvin, min=1000.0, max=40000.0) / 100.0
 
@@ -2048,16 +2347,133 @@ class KerrRayTracer:
         dy[-1] = (y[-1] - y[-2]) / dx[-1]
         return torch.nan_to_num(dy, nan=0.0, posinf=0.0, neginf=0.0)
 
-    def _sample_flux_lut(self, r: torch.Tensor, rr_lut: torch.Tensor, flux_lut: torch.Tensor) -> torch.Tensor:
+    def _sample_curve_lut(self, r: torch.Tensor, rr_lut: torch.Tensor, value_lut: torch.Tensor) -> torch.Tensor:
         idx_hi = torch.searchsorted(rr_lut, r, right=False)
         idx_hi = torch.clamp(idx_hi, min=1, max=rr_lut.shape[0] - 1)
         idx_lo = idx_hi - 1
         r_lo = rr_lut[idx_lo]
         r_hi = rr_lut[idx_hi]
-        f_lo = flux_lut[idx_lo]
-        f_hi = flux_lut[idx_hi]
+        f_lo = value_lut[idx_lo]
+        f_hi = value_lut[idx_hi]
         t = (r - r_lo) / torch.clamp(r_hi - r_lo, min=1.0e-8)
-        return torch.clamp(f_lo + (f_hi - f_lo) * t, min=0.0)
+        return f_lo + (f_hi - f_lo) * t
+
+    def _sample_flux_lut(self, r: torch.Tensor, rr_lut: torch.Tensor, flux_lut: torch.Tensor) -> torch.Tensor:
+        return torch.clamp(self._sample_curve_lut(r, rr_lut, flux_lut), min=0.0)
+
+    def _metric_keplerian_omega(
+        self,
+        rr: torch.Tensor,
+        metric: object | None = None,
+    ) -> torch.Tensor:
+        if metric is None:
+            theta = torch.full_like(rr, math.pi * 0.5)
+            metric = metric_components(
+                rr,
+                theta,
+                self.config.spin,
+                self.config.metric_model,
+                self.config.charge,
+                self.config.cosmological_constant,
+            )
+        gtt = metric.g_tt
+        gtphi = metric.g_tphi
+        gphiphi = metric.g_phiphi
+
+        dgtt = self._finite_diff_1d(gtt, rr)
+        dgtphi = self._finite_diff_1d(gtphi, rr)
+        dgphiphi = self._finite_diff_1d(gphiphi, rr)
+
+        disc = torch.clamp(dgtphi * dgtphi - dgtt * dgphiphi, min=0.0)
+        sqrt_disc = torch.sqrt(disc)
+        den_om = torch.where(
+            dgphiphi >= 0.0,
+            torch.clamp(dgphiphi, min=1.0e-9),
+            torch.clamp(dgphiphi, max=-1.0e-9),
+        )
+        omega_p = (-dgtphi + sqrt_disc) / den_om
+        omega_m = (-dgtphi - sqrt_disc) / den_om
+
+        # Prograde branch selection with timelike-condition filtering.
+        guess = torch.sqrt(1.0 / torch.clamp(rr * rr * rr, min=1.0e-9))
+        denom_p = -(gtt + 2.0 * gtphi * omega_p + gphiphi * omega_p * omega_p)
+        denom_m = -(gtt + 2.0 * gtphi * omega_m + gphiphi * omega_m * omega_m)
+        valid_p = denom_p > 1.0e-10
+        valid_m = denom_m > 1.0e-10
+        err_p = torch.abs(omega_p - guess)
+        err_m = torch.abs(omega_m - guess)
+        prefer_p = (err_p <= err_m) | (~valid_m)
+        omega = torch.where(prefer_p, omega_p, omega_m)
+        omega = torch.where(valid_p | valid_m, omega, guess)
+
+        den_fb = torch.pow(torch.clamp(rr, min=1.0e-8), 1.5) + torch.as_tensor(
+            self.metric_spin, dtype=self.dtype, device=self.device
+        )
+        den_fb = torch.where(den_fb >= 0.0, torch.clamp(den_fb, min=1.0e-8), torch.clamp(den_fb, max=-1.0e-8))
+        fallback = 1.0 / den_fb
+        omega = torch.where(torch.isfinite(omega), omega, fallback)
+        return torch.nan_to_num(omega, nan=0.0, posinf=0.0, neginf=0.0)
+
+    def _build_keplerian_omega_lut(self, rin: float, rmax: float) -> tuple[torch.Tensor, torch.Tensor]:
+        rin_safe = max(1.0e-4, float(rin) * 1.0005)
+        rmax_safe = max(rin_safe + 1.0e-3, float(rmax))
+        span = rmax_safe - rin_safe
+        samples = max(512, min(4096, int(512 + 64.0 * span)))
+        key = (
+            "omega_keplerian",
+            str(self.device),
+            str(self.dtype),
+            self.config.metric_model,
+            round(float(self.config.spin), 8),
+            round(float(self.config.charge), 8),
+            round(float(self.config.cosmological_constant), 12),
+            round(rin_safe, 6),
+            round(rmax_safe, 3),
+            int(samples),
+        )
+        cached = KerrRayTracer._keplerian_omega_cache.get(key)
+        if cached is not None:
+            return cached
+
+        disk_key = (
+            self.config.metric_model,
+            round(float(self.config.spin), 8),
+            round(float(self.config.charge), 8),
+            round(float(self.config.cosmological_constant), 12),
+            round(rin_safe, 6),
+            round(rmax_safe, 3),
+            int(samples),
+        )
+        persisted = self._persistent_load_lut_pair("omega_keplerian", disk_key)
+        if persisted is not None:
+            KerrRayTracer._keplerian_omega_cache[key] = persisted
+            return persisted
+
+        rr = torch.linspace(rin_safe, rmax_safe, samples, dtype=self.dtype, device=self.device)
+        omega = self._metric_keplerian_omega(rr)
+        omega = torch.nan_to_num(omega, nan=0.0, posinf=0.0, neginf=0.0)
+        if not bool((torch.abs(omega) > 0.0).any()):
+            den = torch.pow(torch.clamp(rr, min=1.0e-8), 1.5) + torch.as_tensor(
+                self.metric_spin, dtype=self.dtype, device=self.device
+            )
+            den = torch.where(den >= 0.0, torch.clamp(den, min=1.0e-8), torch.clamp(den, max=-1.0e-8))
+            omega = 1.0 / den
+
+        KerrRayTracer._keplerian_omega_cache[key] = (rr, omega)
+        self._persistent_save_lut_pair("omega_keplerian", disk_key, rr, omega)
+        if len(KerrRayTracer._keplerian_omega_cache) > 24:
+            KerrRayTracer._keplerian_omega_cache.pop(next(iter(KerrRayTracer._keplerian_omega_cache)))
+        return rr, omega
+
+    def _disk_keplerian_omega(self, r: torch.Tensor) -> torch.Tensor:
+        if self._disk_omega_lut_main is not None:
+            rr_lut, omega_lut = self._disk_omega_lut_main
+            r_sample = torch.clamp(r, min=rr_lut[0], max=rr_lut[-1])
+            omega = self._sample_curve_lut(r_sample, rr_lut, omega_lut)
+            return torch.nan_to_num(omega, nan=0.0, posinf=0.0, neginf=0.0)
+        den = torch.pow(torch.clamp(r, min=1.0e-8), 1.5) + torch.as_tensor(self.metric_spin, dtype=self.dtype, device=self.device)
+        den = torch.where(den >= 0.0, torch.clamp(den, min=1.0e-8), torch.clamp(den, max=-1.0e-8))
+        return 1.0 / den
 
     def _build_nt_general_lut(self, rin: float, rmax: float) -> tuple[torch.Tensor, torch.Tensor]:
         rin_safe = max(1.0e-4, float(rin) * 1.0005)
@@ -2108,28 +2524,7 @@ class KerrRayTracer:
         gtphi = metric.g_tphi
         gphiphi = metric.g_phiphi
 
-        dgtt = self._finite_diff_1d(gtt, rr)
-        dgtphi = self._finite_diff_1d(gtphi, rr)
-        dgphiphi = self._finite_diff_1d(gphiphi, rr)
-
-        disc = torch.clamp(dgtphi * dgtphi - dgtt * dgphiphi, min=0.0)
-        sqrt_disc = torch.sqrt(disc)
-        den_om = torch.where(dgphiphi >= 0.0, torch.clamp(dgphiphi, min=1.0e-9), torch.clamp(dgphiphi, max=-1.0e-9))
-        omega_p = (-dgtphi + sqrt_disc) / den_om
-        omega_m = (-dgtphi - sqrt_disc) / den_om
-
-        # Select the branch that remains timelike and closest to the local
-        # Keplerian orientation used by the renderer.
-        guess = torch.sqrt(1.0 / torch.clamp(rr * rr * rr, min=1.0e-9))
-        denom_p = -(gtt + 2.0 * gtphi * omega_p + gphiphi * omega_p * omega_p)
-        denom_m = -(gtt + 2.0 * gtphi * omega_m + gphiphi * omega_m * omega_m)
-        valid_p = denom_p > 1.0e-10
-        valid_m = denom_m > 1.0e-10
-        err_p = torch.abs(omega_p - guess)
-        err_m = torch.abs(omega_m - guess)
-        prefer_p = (err_p <= err_m) | (~valid_m)
-        omega = torch.where(prefer_p, omega_p, omega_m)
-        omega = torch.where(valid_p | valid_m, omega, guess)
+        omega = self._metric_keplerian_omega(rr, metric=metric)
 
         denom_ut = -(gtt + 2.0 * gtphi * omega + gphiphi * omega * omega)
         ut = torch.rsqrt(torch.clamp(denom_ut, min=1.0e-10))
@@ -2306,6 +2701,42 @@ class KerrRayTracer:
 
     def _disk_half_thickness(self, r: torch.Tensor) -> torch.Tensor:
         return self._disk_half_thickness_and_slope(r)[0]
+
+    def _disk_volume_emission_factor(self, r: torch.Tensor, p_theta_abs: torch.Tensor) -> torch.Tensor:
+        cfg = self.config
+        if (not cfg.disk_volume_emission) or cfg.disk_volume_strength <= 0.0:
+            return torch.ones_like(r)
+
+        h = self._disk_half_thickness(r)
+        h_fallback = 0.015 * torch.clamp(r, min=1.0)
+        h_eff = torch.where(h > 1.0e-6, h, h_fallback)
+
+        mu_los = p_theta_abs / torch.clamp(p_theta_abs + 0.10, min=1.0e-6)
+        path_len = (2.0 * h_eff) / torch.clamp(mu_los, min=0.04)
+        tau = (
+            torch.as_tensor(cfg.disk_volume_density_scale, dtype=self.dtype, device=self.device)
+            * path_len
+            / torch.clamp(r, min=1.0e-6)
+        )
+        trans = 1.0 - torch.exp(-torch.clamp(tau, min=0.0, max=40.0))
+
+        ns = max(1, int(cfg.disk_volume_samples))
+        if ns == 1:
+            temp_factor = torch.ones_like(r)
+        else:
+            zeta = torch.linspace(-1.0, 1.0, ns, dtype=self.dtype, device=self.device).view(1, ns)
+            sigma = torch.as_tensor(0.48, dtype=self.dtype, device=self.device)
+            rho = torch.exp(-0.5 * torch.square(zeta / sigma))
+            temp_drop = torch.as_tensor(cfg.disk_volume_temperature_drop, dtype=self.dtype, device=self.device)
+            temp_mod = 1.0 - temp_drop * torch.abs(zeta)
+            angle_mod = 0.85 + 0.15 * mu_los.unsqueeze(-1)
+            kernel = rho * temp_mod * angle_mod
+            denom = torch.clamp(torch.sum(rho, dim=-1, keepdim=True), min=1.0e-8)
+            temp_factor = torch.sum(kernel, dim=-1) / denom.squeeze(-1)
+
+        strength = torch.as_tensor(cfg.disk_volume_strength, dtype=self.dtype, device=self.device)
+        factor = 1.0 + strength * trans * torch.clamp(temp_factor, min=0.0)
+        return torch.clamp(factor, min=0.0, max=8.0)
 
     def _sample_equirectangular(self, texture: torch.Tensor, u: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         tex_h = texture.shape[0]
@@ -2651,6 +3082,8 @@ class KerrRayTracer:
         p_phi_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_theta_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         disk_vertical_weight = torch.zeros(n, dtype=self.dtype, device=self.device)
+        disk_hit_order = torch.zeros(n, dtype=self.dtype, device=self.device)
+        disk_cross_count = torch.zeros(n, dtype=torch.int16, device=self.device)
         t_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         phi_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_t_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
@@ -2702,6 +3135,17 @@ class KerrRayTracer:
             step_used = local_step
 
             if cfg.adaptive_integrator:
+                if cfg.adaptive_event_aware:
+                    event_fac = self._event_aware_step_factor_bl(
+                        r=prev_state[:, 1],
+                        theta=prev_state[:, 2],
+                        horizon_cut=horizon_cut,
+                    )
+                    local_step = torch.clamp(
+                        local_step * event_fac,
+                        min=cfg.adaptive_step_min,
+                        max=cfg.adaptive_step_max,
+                    )
                 recovered_local = torch.zeros_like(local_step, dtype=torch.bool)
                 if use_bl_fsal and bl_k1_cache is not None and bl_k1_valid is not None:
                     next_all, accepted_local, next_step, fatal_local, k7 = self._rk45_adaptive_step_fsal(
@@ -2723,7 +3167,7 @@ class KerrRayTracer:
                     fb_state = fatal_prev
                     fb_ok = torch.ones((fatal_prev.shape[0],), dtype=torch.bool, device=self.device)
                     for _ in range(substeps):
-                        fb_next = self._rk4_step(fb_state, h_fb)
+                        fb_next = self._rk4_bl_step_fn(fb_state, h_fb)
                         finite_fb = torch.isfinite(fb_next).all(dim=-1)
                         fb_ok = fb_ok & finite_fb
                         fb_state = torch.where(finite_fb.unsqueeze(-1), fb_next, fb_state)
@@ -2759,8 +3203,9 @@ class KerrRayTracer:
                 prev_state = prev_state[accepted_local]
                 next_state = next_all[accepted_local]
                 step_used = local_step[accepted_local]
+                deriv_prev = None
             else:
-                next_state = self._rk4_step(prev_state, float(cfg.step_size))
+                next_state, deriv_prev = self._rk4_step_with_k1(prev_state, float(cfg.step_size))
                 finite = torch.isfinite(next_state).all(dim=-1)
                 if bool((~finite).any()):
                     bad_idx = idx[~finite]
@@ -2774,6 +3219,7 @@ class KerrRayTracer:
                 idx = idx[finite]
                 prev_state = prev_state[finite]
                 next_state = next_state[finite]
+                deriv_prev = deriv_prev[finite]
                 step_used = torch.full((next_state.shape[0],), float(cfg.step_size), dtype=self.dtype, device=self.device)
 
             state[idx] = next_state
@@ -2784,7 +3230,8 @@ class KerrRayTracer:
             next_theta = next_state[:, 2]
             r_min[idx] = torch.minimum(r_min[idx], torch.minimum(prev_r, next_r))
 
-            deriv_prev = self._rhs_fn(prev_state)
+            if deriv_prev is None:
+                deriv_prev = self._rhs_fn(prev_state)
             deriv_next = self._rhs_fn(next_state)
 
             touch_eps = torch.as_tensor(2.0e-4, dtype=self.dtype, device=self.device)
@@ -2869,6 +3316,10 @@ class KerrRayTracer:
                 & (r_cross <= cfg.disk_outer_radius)
                 & (r_cross > horizon_cut)
             )
+            order_local = disk_cross_count[idx] + valid_disk.to(dtype=disk_cross_count.dtype)
+            if cfg.multi_hit_disk:
+                order_local = torch.clamp(order_local, min=0, max=int(cfg.max_disk_crossings))
+            disk_cross_count[idx] = order_local
 
             alpha_particle = torch.zeros_like(prev_r)
             particle_local = torch.zeros_like(valid_disk)
@@ -3099,6 +3550,7 @@ class KerrRayTracer:
             p_phi_emit,
             p_theta_emit,
             disk_vertical_weight,
+            disk_hit_order,
             t_emit,
             phi_emit,
             p_t_particle,
@@ -3165,6 +3617,8 @@ class KerrRayTracer:
         p_phi_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_theta_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         disk_vertical_weight = torch.zeros(n, dtype=self.dtype, device=self.device)
+        disk_hit_order = torch.zeros(n, dtype=self.dtype, device=self.device)
+        disk_cross_count = torch.zeros(n, dtype=torch.int16, device=self.device)
         t_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         phi_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_t_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
@@ -3217,6 +3671,16 @@ class KerrRayTracer:
             step_used = local_step
 
             if cfg.adaptive_integrator:
+                if cfg.adaptive_event_aware:
+                    event_fac = self._event_aware_step_factor_ks(
+                        xyz=prev_state[:, 1:4],
+                        horizon_cut=horizon_cut,
+                    )
+                    local_step = torch.clamp(
+                        local_step * event_fac,
+                        min=cfg.adaptive_step_min,
+                        max=cfg.adaptive_step_max,
+                    )
                 recovered_local = torch.zeros_like(local_step, dtype=torch.bool)
                 if use_ks_fsal and ks_k1_cache is not None and ks_k1_valid is not None:
                     next_all, accepted_local, next_step, fatal_local, k7 = self._rk45_adaptive_step_kerr_schild_fsal(
@@ -3238,7 +3702,7 @@ class KerrRayTracer:
                     fb_state = fatal_prev
                     fb_ok = torch.ones((fatal_prev.shape[0],), dtype=torch.bool, device=self.device)
                     for _ in range(substeps):
-                        fb_next = self._rk4_step_kerr_schild(fb_state, h_fb)
+                        fb_next = self._rk4_ks_step_fn(fb_state, h_fb)
                         finite_fb = torch.isfinite(fb_next).all(dim=-1)
                         fb_ok = fb_ok & finite_fb
                         fb_state = torch.where(finite_fb.unsqueeze(-1), fb_next, fb_state)
@@ -3273,8 +3737,9 @@ class KerrRayTracer:
                 prev_state = prev_state[accepted_local]
                 next_state = next_all[accepted_local]
                 step_used = local_step[accepted_local]
+                deriv_prev = None
             else:
-                next_state = self._rk4_step_kerr_schild(prev_state, float(cfg.step_size))
+                next_state, deriv_prev = self._rk4_step_kerr_schild_with_k1(prev_state, float(cfg.step_size))
                 finite = torch.isfinite(next_state).all(dim=-1)
                 if bool((~finite).any()):
                     bad_idx = idx[~finite]
@@ -3286,6 +3751,7 @@ class KerrRayTracer:
                 idx = idx[finite]
                 prev_state = prev_state[finite]
                 next_state = next_state[finite]
+                deriv_prev = deriv_prev[finite]
                 step_used = torch.full((next_state.shape[0],), float(cfg.step_size), dtype=self.dtype, device=self.device)
 
             state[idx] = next_state
@@ -3309,7 +3775,8 @@ class KerrRayTracer:
             prev_z = prev_xyz[:, 2]
             next_z = next_xyz[:, 2]
             if cfg.thick_disk and cfg.disk_thickness_ratio > 0.0:
-                deriv_prev = self._rhs_kerr_schild_fn(prev_state)
+                if deriv_prev is None:
+                    deriv_prev = self._rhs_kerr_schild_fn(prev_state)
                 deriv_next = self._rhs_kerr_schild_fn(next_state)
                 prev_dx, prev_dy, prev_dz = deriv_prev[:, 1], deriv_prev[:, 2], deriv_prev[:, 3]
                 next_dx, next_dy, next_dz = deriv_next[:, 1], deriv_next[:, 2], deriv_next[:, 3]
@@ -3385,6 +3852,10 @@ class KerrRayTracer:
                 & (r_cross <= cfg.disk_outer_radius)
                 & (r_cross > horizon_cut)
             )
+            order_local = disk_cross_count[idx] + valid_disk.to(dtype=disk_cross_count.dtype)
+            if cfg.multi_hit_disk:
+                order_local = torch.clamp(order_local, min=0, max=int(cfg.max_disk_crossings))
+            disk_cross_count[idx] = order_local
 
             alpha_particle = torch.zeros_like(prev_r)
             particle_local = torch.zeros_like(valid_disk)
@@ -3493,6 +3964,7 @@ class KerrRayTracer:
                 p_phi_emit[hit_idx] = disk_p_phi[sel_disk]
                 p_theta_emit[hit_idx] = disk_p_theta[sel_disk]
                 disk_vertical_weight[hit_idx] = vertical_local[sel_disk]
+                disk_hit_order[hit_idx] = order_local[sel_disk].to(dtype=self.dtype)
                 t_emit[hit_idx] = state_disk[:, 0][sel_disk]
                 phi_emit[hit_idx] = phi_cross[sel_disk]
 
@@ -3531,6 +4003,7 @@ class KerrRayTracer:
             p_phi_emit,
             p_theta_emit,
             disk_vertical_weight,
+            disk_hit_order,
             t_emit,
             phi_emit,
             p_t_particle,
@@ -3591,6 +4064,8 @@ class KerrRayTracer:
         p_phi_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_theta_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         disk_vertical_weight = torch.zeros(n, dtype=self.dtype, device=self.device)
+        disk_hit_order = torch.zeros(n, dtype=self.dtype, device=self.device)
+        disk_cross_count = torch.zeros(n, dtype=torch.int16, device=self.device)
         t_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         phi_emit = torch.zeros(n, dtype=self.dtype, device=self.device)
         p_t_particle = torch.zeros(n, dtype=self.dtype, device=self.device)
@@ -3625,7 +4100,19 @@ class KerrRayTracer:
             steps_used = step + 1
             idx = torch.nonzero(active, as_tuple=False).squeeze(-1)
             prev_state = state[idx]
-            next_state = self._rk4_step(prev_state, step_h)
+            next_state, deriv_prev = self._rk4_step_with_k1(prev_state, step_h)
+            if cfg.adaptive_integrator and cfg.adaptive_event_aware:
+                prev_r0 = prev_state[:, 1]
+                prev_theta0 = prev_state[:, 2]
+                event_scale = self._event_aware_step_factor_bl(prev_r0, prev_theta0, horizon_cut)
+                near_event = event_scale < 0.28
+                if bool(near_event.any()):
+                    near_pos = torch.nonzero(near_event, as_tuple=False).squeeze(-1)
+                    near_prev = prev_state[near_pos]
+                    mid_state, near_k1 = self._rk4_step_with_k1(near_prev, 0.5 * step_h)
+                    near_next, _ = self._rk4_step_with_k1(mid_state, 0.5 * step_h)
+                    next_state[near_pos] = near_next
+                    deriv_prev[near_pos] = near_k1
 
             finite = torch.isfinite(next_state).all(dim=-1)
             if bool((~finite).any()):
@@ -3640,6 +4127,7 @@ class KerrRayTracer:
             idx = idx[finite]
             prev_state = prev_state[finite]
             next_state = next_state[finite]
+            deriv_prev = deriv_prev[finite]
             state[idx] = next_state
 
             prev_r = prev_state[:, 1]
@@ -3648,7 +4136,6 @@ class KerrRayTracer:
             next_theta = next_state[:, 2]
             r_min[idx] = torch.minimum(r_min[idx], torch.minimum(prev_r, next_r))
 
-            deriv_prev = self._rhs_fn(prev_state)
             deriv_next = self._rhs_fn(next_state)
             step_used = torch.full((next_state.shape[0],), step_h, dtype=self.dtype, device=self.device)
             if cfg.thick_disk and cfg.disk_thickness_ratio > 0.0:
@@ -3733,6 +4220,10 @@ class KerrRayTracer:
                 & (r_cross <= cfg.disk_outer_radius)
                 & (r_cross > horizon_cut)
             )
+            order_local = disk_cross_count[idx] + valid_disk.to(dtype=disk_cross_count.dtype)
+            if cfg.multi_hit_disk:
+                order_local = torch.clamp(order_local, min=0, max=int(cfg.max_disk_crossings))
+            disk_cross_count[idx] = order_local
             alpha_particle = torch.zeros_like(prev_r)
             particle_local = torch.zeros_like(valid_disk)
             if emitter_pos is not None and emitter_radius2 is not None:
@@ -3814,6 +4305,7 @@ class KerrRayTracer:
                 p_phi_emit[hit_idx] = p_phi_interp[sel_disk]
                 p_theta_emit[hit_idx] = p_theta_interp[sel_disk]
                 disk_vertical_weight[hit_idx] = vertical_local[sel_disk]
+                disk_hit_order[hit_idx] = order_local[sel_disk].to(dtype=self.dtype)
                 t_emit[hit_idx] = t_interp[sel_disk]
                 phi_emit[hit_idx] = phi_interp[sel_disk]
 
@@ -3849,6 +4341,7 @@ class KerrRayTracer:
             p_phi_emit,
             p_theta_emit,
             disk_vertical_weight,
+            disk_hit_order,
             t_emit,
             phi_emit,
             p_t_particle,
@@ -3871,6 +4364,7 @@ class KerrRayTracer:
         p_phi_emit: torch.Tensor,
         p_theta_emit: torch.Tensor,
         disk_vertical_weight: torch.Tensor,
+        disk_hit_order: torch.Tensor,
         t_emit: torch.Tensor,
         phi_emit: torch.Tensor,
         p_t_particle: torch.Tensor,
@@ -3947,6 +4441,13 @@ class KerrRayTracer:
             p_theta_disk = torch.abs(p_theta_emit[disk_idx])
             vertical_w = torch.clamp(disk_vertical_weight[disk_idx], min=0.0, max=1.0)
             vertical_gain = torch.clamp(0.32 + 0.68 * vertical_w, min=0.0, max=1.0)
+            order = torch.clamp(disk_hit_order[disk_idx], min=1.0)
+            if cfg.multi_hit_disk:
+                # Rays that cross the disk multiple times are usually higher-order
+                # lensed images (photon-ring vicinity). Boost gently, not explosively.
+                order_gain = 1.0 + cfg.lensing_order_strength * torch.pow(torch.log2(order + 1.0), cfg.lensing_order_gamma)
+            else:
+                order_gain = torch.ones_like(order)
             t_disk = t_emit[disk_idx]
             phi_disk = phi_emit[disk_idx]
 
@@ -3978,7 +4479,7 @@ class KerrRayTracer:
                 cfg.cosmological_constant,
             )
 
-            omega = 1.0 / (torch.pow(r_profile, 1.5) + self.metric_spin)
+            omega = self._disk_keplerian_omega(r_profile)
             u_t = torch.rsqrt(torch.clamp(-(metric.g_tt + 2.0 * metric.g_tphi * omega + metric.g_phiphi * omega * omega), min=1.0e-8))
 
             denom = -(p_t * u_t + p_phi * omega * u_t)
@@ -3997,6 +4498,15 @@ class KerrRayTracer:
             inner_rim = torch.exp(-torch.pow((r_profile - cfg.disk_inner_radius) / inner_width, 2.0))
             outer_rim = torch.exp(-torch.pow((cfg.disk_outer_radius - r_profile) / outer_width, 2.0))
             body = torch.pow(1.0 - x, 0.35)
+            layer_complexity = torch.clamp(
+                0.52 * torch.pow(1.0 - x, 0.66)
+                + 0.24 * torch.pow(torch.clamp(g_factor / 4.0, min=0.0, max=1.5), 0.9)
+                + 0.16 * inner_rim
+                + 0.08 * torch.clamp(order / torch.clamp(torch.as_tensor(float(max(1, cfg.max_disk_crossings)), dtype=self.dtype, device=self.device), min=1.0), min=0.0, max=1.0),
+                min=0.0,
+                max=1.0,
+            )
+            volume_factor = self._disk_volume_emission_factor(r_profile, p_theta_disk)
 
             disk_model = cfg.disk_model if cfg.physical_disk_model else "legacy"
             if disk_model == "physical_nt":
@@ -4015,6 +4525,8 @@ class KerrRayTracer:
                 edge_weight = 0.22 + body + cfg.inner_edge_boost * inner_rim + cfg.outer_edge_boost * outer_rim
                 intensity = torch.clamp(flux_norm * edge_weight * relativistic_gain, min=0.0, max=40.0)
                 intensity = intensity * vertical_gain
+                intensity = intensity * order_gain
+                intensity = intensity * volume_factor
 
                 temp_profile = torch.pow(torch.clamp(flux_norm, min=1.0e-9), 0.25)
                 temp_kelvin = cfg.disk_temperature_inner * temp_profile
@@ -4037,6 +4549,19 @@ class KerrRayTracer:
                     color = torch.stack([color[:, 0], color[:, 1], color[:, 2] * blue_cut], dim=-1)
                     ion_sheen_nt = torch.stack([0.30 * inner_rim, 0.14 * inner_rim, 0.04 * inner_rim], dim=-1)
                     color = color + plasma_warmth * ion_sheen_nt
+                if cfg.disk_palette == "interstellar_warm":
+                    warm_color = self._interstellar_warm_palette(x)
+                    color = 0.45 * color + 0.55 * warm_color
+                if cfg.disk_layered_palette:
+                    layered = self._disk_layered_palette_color(
+                        x,
+                        phi_disk=phi_disk,
+                        t_disk=t_disk,
+                        layer_complexity=layer_complexity,
+                    )
+                    layer_mix = torch.as_tensor(cfg.disk_layer_mix, dtype=self.dtype, device=self.device)
+                    color = (1.0 - layer_mix) * color + layer_mix * layered
+                color = color * (0.90 + 0.10 * torch.sqrt(torch.clamp(volume_factor, min=0.0)).unsqueeze(-1))
                 dilution = 1.0 / torch.clamp(torch.pow(f_col, 4.0), min=1.0)
                 disk_rgb = color * (dilution * 1.05 * intensity.unsqueeze(-1))
             else:
@@ -4053,6 +4578,8 @@ class KerrRayTracer:
                 discontinuity = torch.clamp(0.18 + 0.82 * sector_mask * (0.65 + 0.35 * fine_band), min=0.0, max=1.0)
                 intensity = intensity * (0.35 + 1.25 * discontinuity)
                 intensity = intensity * vertical_gain
+                intensity = intensity * order_gain
+                intensity = intensity * volume_factor
 
                 intensity = torch.clamp(intensity, min=0.0, max=30.0)
                 heat = torch.clamp(torch.pow(1.0 - x, 0.42) + 0.20 * torch.pow(torch.clamp(g_factor / 3.0, min=0.0, max=1.0), 1.2), min=0.0, max=1.0)
@@ -4067,6 +4594,7 @@ class KerrRayTracer:
                 ion_sheen = torch.stack([0.55 * rim, 0.34 * rim, 0.14 * rim], dim=-1)
                 white_core = torch.pow(torch.clamp(g_factor / 4.5, min=0.0, max=1.0), 2.0).unsqueeze(-1)
                 color = color + ion_sheen + 0.40 * white_core
+                color = color * (0.90 + 0.10 * torch.sqrt(torch.clamp(volume_factor, min=0.0)).unsqueeze(-1))
                 disk_rgb = color * (0.95 * intensity.unsqueeze(-1))
             disk_rgb = disk_rgb * emission_gain
             rgb[disk_idx] = disk_rgb
@@ -4080,13 +4608,25 @@ class KerrRayTracer:
         return rgb
 
     def _tone_map(self, rgb_linear: torch.Tensor) -> torch.Tensor:
-        rgb = torch.clamp(rgb_linear, min=0.0)
+        rgb = torch.clamp(rgb_linear, min=0.0) * float(self.config.tone_exposure)
         if self.config.tone_mapper == "aces":
             # Narkowicz 2015 approximation for ACES filmic curve.
             a, b, c, d, e = 2.51, 0.03, 2.43, 0.59, 0.14
             mapped = (rgb * (a * rgb + b)) / torch.clamp(rgb * (c * rgb + d) + e, min=1.0e-8)
-            return torch.clamp(mapped, min=0.0, max=1.0)
-        return rgb / (1.0 + rgb)
+        elif self.config.tone_mapper == "filmic":
+            # Hable/Uncharted2 filmic curve with configurable white point.
+            A, B, C, D, E, Fv = 0.15, 0.50, 0.10, 0.20, 0.02, 0.30
+            mapped = ((rgb * (A * rgb + C * B) + D * E) / torch.clamp(rgb * (A * rgb + B) + D * Fv, min=1.0e-8)) - (E / Fv)
+            w = float(self.config.tone_white_point)
+            white = ((w * (A * w + C * B) + D * E) / max(1.0e-8, (w * (A * w + B) + D * Fv))) - (E / Fv)
+            mapped = mapped / max(1.0e-8, white)
+        else:
+            mapped = rgb / (1.0 + rgb)
+
+        roll = float(self.config.tone_highlight_rolloff)
+        if roll > 0.0:
+            mapped = mapped / (1.0 + roll * torch.pow(torch.clamp(mapped, min=0.0), 1.35))
+        return torch.clamp(mapped, min=0.0, max=1.0)
 
     def _apply_postprocess_pipeline(self, rgb: torch.Tensor) -> torch.Tensor:
         pipeline = self.config.postprocess_pipeline
@@ -4426,6 +4966,11 @@ class KerrRayTracer:
         tile_rows_cfg = int(self.config.render_tile_rows)
         if tile_rows_cfg > 0:
             tile_rows = min(h, tile_rows_cfg)
+        elif self.use_mps_optimized_kernel and self.config.mps_auto_chunking and h >= 480:
+            # MPS path benefits from moderate row chunking to avoid very large kernels
+            # and keep compile/replay overhead predictable.
+            target_chunks = 12 if h >= 432 else 8
+            tile_rows = max(1, min(h, math.ceil(h / target_chunks)))
         elif self.config.adaptive_spatial_sampling and h > 1:
             # Adaptive per-row scheduling needs multiple row blocks even when the
             # progress bar is disabled.
@@ -4686,12 +5231,9 @@ class KerrRayTracer:
             progress_stop.set()
             ticker_thread.join(timeout=1.5)
 
-        roi_enabled = bool(
-            cfg_render_base.roi_supersampling
-            and emitter_payload is None
-            and h >= 96
-            and w >= 96
-        )
+        # ROI supersampling disabled: in realistic KNdS/GKS profiles this mode
+        # improved local detail but introduced a substantial render-time penalty.
+        roi_enabled = False
         if roi_enabled:
             try:
                 self.config = cfg_render_base
@@ -4746,6 +5288,10 @@ class KerrRayTracer:
                 force=False,
             )
 
+        try:
+            self._last_rgb_float = self._apply_postprocess_pipeline(rgb).detach().to(device="cpu", dtype=torch.float32).contiguous()
+        except Exception:
+            self._last_rgb_float = None
         out_t = self._finalize_rgb_cuda_graph(rgb)
         out = out_t.cpu().contiguous().numpy()
         image = Image.fromarray(out, mode="RGB")
@@ -4763,5 +5309,31 @@ class KerrRayTracer:
         target = Path(output_path or self.config.output)
         target.parent.mkdir(parents=True, exist_ok=True)
         result = self.render(emitter=emitter)
-        result.image.save(target)
+        suffix = target.suffix.lower()
+        if suffix in {".hdr", ".exr"}:
+            if self._last_rgb_float is None:
+                float_rgb = np.asarray(result.image.convert("RGB"), dtype=np.float32) / 255.0
+            else:
+                float_rgb = self._last_rgb_float.numpy()
+            if suffix == ".hdr":
+                if iio is not None:
+                    try:
+                        iio.imwrite(str(target), float_rgb.astype(np.float32, copy=False))
+                    except Exception:
+                        _write_radiance_hdr(target, float_rgb)
+                else:
+                    _write_radiance_hdr(target, float_rgb)
+            else:
+                if iio is None:
+                    raise RuntimeError(
+                        "EXR output requires imageio backend support. Install with: pip install imageio[opencv]"
+                    )
+                try:
+                    iio.imwrite(str(target), float_rgb.astype(np.float32, copy=False))
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to write .exr output. Ensure imageio backend supports EXR: {exc}"
+                    ) from exc
+        else:
+            result.image.save(target)
         return result.stats

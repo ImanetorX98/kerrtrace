@@ -64,6 +64,22 @@ class RenderConfig:
     disk_temperature_inner: float = 18000.0
     disk_color_correction: float = 1.7
     disk_plasma_warmth: float = 0.38
+    disk_palette: str = "default"
+    disk_layered_palette: bool = False
+    disk_layer_count: int = 12
+    disk_layer_mix: float = 0.55
+    disk_layer_pattern_count: float = 14.0
+    disk_layer_pattern_contrast: float = 0.45
+    disk_layer_time_scale: float = 1.0
+    disk_layer_global_phase: float = 0.0
+    disk_layer_phase_rate_hz: float = 0.35
+    disk_layer_accident_strength: float = 0.42
+    disk_layer_accident_count: float = 3.8
+    disk_layer_accident_sharpness: float = 7.0
+    disk_adaptive_stratification: bool = False
+    disk_adaptive_layers_min: int = 8
+    disk_adaptive_layers_max: int = 48
+    disk_adaptive_complexity_mix: float = 0.65
     disk_emission_gain: float = 1.0
     disk_structure_mode: str = "continuous"
     disk_annuli_count: int = 48
@@ -72,10 +88,16 @@ class RenderConfig:
     disk_thickness_ratio: float = 0.12
     disk_thickness_power: float = 0.0
     disk_vertical_softness: float = 0.30
+    disk_volume_emission: bool = False
+    disk_volume_samples: int = 5
+    disk_volume_density_scale: float = 1.0
+    disk_volume_temperature_drop: float = 0.28
+    disk_volume_strength: float = 0.85
     vertical_transition_mode: str = "continuous"
     enforce_black_hole_shadow: bool = True
     shadow_absorb_radius_factor: float = 1.35
     adaptive_integrator: bool = True
+    adaptive_event_aware: bool = True
     adaptive_rtol: float = 2.0e-4
     adaptive_atol: float = 1.0e-6
     adaptive_step_min: float = 0.03
@@ -90,19 +112,32 @@ class RenderConfig:
     compile_rhs: bool = False
     mixed_precision: bool = False
     mps_optimized_kernel: bool = False
+    mps_auto_chunking: bool = True
     allow_mps_emitter_fastpath: bool = True
     temporal_reprojection: bool = False
+    temporal_denoise_mode: str = "basic"
     temporal_blend: float = 0.18
     temporal_clamp: float = 24.0
     motion_vector_scale: float = 1.0
+    temporal_denoise_radius: int = 1
+    temporal_denoise_sigma: float = 18.0
+    temporal_denoise_clip: float = 9.0
     disk_beaming_strength: float = 0.45
     disk_self_occlusion_strength: float = 0.35
+    multi_hit_disk: bool = True
+    max_disk_crossings: int = 6
+    lensing_order_strength: float = 0.24
+    lensing_order_gamma: float = 0.75
     enable_emitter_polarization: bool = False
     magnetic_field_strength: float = 0.0
     faraday_rotation_strength: float = 0.6
     tone_mapper: str = "reinhard"
+    tone_exposure: float = 1.0
+    tone_white_point: float = 11.2
+    tone_highlight_rolloff: float = 0.18
     postprocess_pipeline: str = "off"
     gargantua_look_strength: float = 0.0
+    gargantua_look_preset: bool = False
     video_codec: str = "h264"
     video_crf: int = 18
     render_tile_rows: int = 0
@@ -173,6 +208,44 @@ class RenderConfig:
         # Backward compatibility with older configs/CLI that toggle physical_disk_model.
         if (not cfg.physical_disk_model) and cfg.disk_model == "physical_nt":
             cfg = replace(cfg, disk_model="legacy")
+        if cfg.gargantua_look_preset:
+            # Preset inspired by DNGR descriptions (James et al. 2015 / CERN Courier):
+            # thin bright disk, stronger Doppler/intensity asymmetry, cinematic flare/rolloff.
+            defaults = RenderConfig()
+            updates: dict[str, object] = {}
+
+            def _set_if_default(name: str, value: object) -> None:
+                if getattr(cfg, name) == getattr(defaults, name):
+                    updates[name] = value
+
+            _set_if_default("physical_disk_model", True)
+            _set_if_default("disk_model", "physical_nt")
+            _set_if_default("disk_radial_profile", "nt_page_thorne")
+            _set_if_default("thick_disk", False)
+            _set_if_default("disk_plasma_warmth", 0.42)
+            _set_if_default("disk_palette", "interstellar_warm")
+            _set_if_default("disk_layered_palette", True)
+            _set_if_default("disk_layer_count", 10)
+            _set_if_default("disk_layer_mix", 0.45)
+            _set_if_default("disk_layer_pattern_count", 10.0)
+            _set_if_default("disk_layer_pattern_contrast", 0.34)
+            _set_if_default("disk_emission_gain", 1.35)
+            _set_if_default("disk_beaming_strength", 0.78)
+            _set_if_default("disk_self_occlusion_strength", 0.22)
+            _set_if_default("multi_hit_disk", True)
+            _set_if_default("max_disk_crossings", 8)
+            _set_if_default("lensing_order_strength", 0.34)
+            _set_if_default("lensing_order_gamma", 0.72)
+            _set_if_default("tone_mapper", "filmic")
+            _set_if_default("tone_exposure", 1.12)
+            _set_if_default("tone_white_point", 9.5)
+            _set_if_default("tone_highlight_rolloff", 0.30)
+            _set_if_default("postprocess_pipeline", "gargantua")
+            _set_if_default("gargantua_look_strength", 1.0)
+            _set_if_default("meridian_supersample", True)
+            _set_if_default("enforce_black_hole_shadow", True)
+            if updates:
+                cfg = replace(cfg, **updates)
         return cfg
 
     def validated(self) -> "RenderConfig":
@@ -287,12 +360,50 @@ class RenderConfig:
             raise ValueError("disk_color_correction must be in [1.0, 4.0]")
         if cfg.disk_plasma_warmth < 0.0 or cfg.disk_plasma_warmth > 1.0:
             raise ValueError("disk_plasma_warmth must be in [0, 1]")
+        if cfg.disk_palette not in {"default", "interstellar_warm"}:
+            raise ValueError("disk_palette must be 'default' or 'interstellar_warm'")
+        if cfg.disk_layer_count < 2 or cfg.disk_layer_count > 512:
+            raise ValueError("disk_layer_count must be in [2, 512]")
+        if cfg.disk_layer_mix < 0.0 or cfg.disk_layer_mix > 1.0:
+            raise ValueError("disk_layer_mix must be in [0, 1]")
+        if cfg.disk_layer_pattern_count <= 0.0 or cfg.disk_layer_pattern_count > 1024.0:
+            raise ValueError("disk_layer_pattern_count must be in (0, 1024]")
+        if cfg.disk_layer_pattern_contrast < 0.0 or cfg.disk_layer_pattern_contrast > 1.0:
+            raise ValueError("disk_layer_pattern_contrast must be in [0, 1]")
+        if cfg.disk_layer_time_scale <= 0.0 or cfg.disk_layer_time_scale > 64.0:
+            raise ValueError("disk_layer_time_scale must be in (0, 64]")
+        if cfg.disk_layer_global_phase < -1.0e6 or cfg.disk_layer_global_phase > 1.0e6:
+            raise ValueError("disk_layer_global_phase must be in [-1e6, 1e6]")
+        if cfg.disk_layer_phase_rate_hz < 0.0 or cfg.disk_layer_phase_rate_hz > 64.0:
+            raise ValueError("disk_layer_phase_rate_hz must be in [0, 64]")
+        if cfg.disk_layer_accident_strength < 0.0 or cfg.disk_layer_accident_strength > 4.0:
+            raise ValueError("disk_layer_accident_strength must be in [0, 4]")
+        if cfg.disk_layer_accident_count < 0.0 or cfg.disk_layer_accident_count > 128.0:
+            raise ValueError("disk_layer_accident_count must be in [0, 128]")
+        if cfg.disk_layer_accident_sharpness < 1.0 or cfg.disk_layer_accident_sharpness > 32.0:
+            raise ValueError("disk_layer_accident_sharpness must be in [1, 32]")
+        if cfg.disk_adaptive_layers_min < 2 or cfg.disk_adaptive_layers_min > 1024:
+            raise ValueError("disk_adaptive_layers_min must be in [2, 1024]")
+        if cfg.disk_adaptive_layers_max < 2 or cfg.disk_adaptive_layers_max > 2048:
+            raise ValueError("disk_adaptive_layers_max must be in [2, 2048]")
+        if cfg.disk_adaptive_layers_max < cfg.disk_adaptive_layers_min:
+            raise ValueError("disk_adaptive_layers_max must be >= disk_adaptive_layers_min")
+        if cfg.disk_adaptive_complexity_mix < 0.0 or cfg.disk_adaptive_complexity_mix > 1.0:
+            raise ValueError("disk_adaptive_complexity_mix must be in [0, 1]")
         if cfg.disk_thickness_ratio < 0.0 or cfg.disk_thickness_ratio > 1.2:
             raise ValueError("disk_thickness_ratio must be in [0, 1.2]")
         if cfg.disk_thickness_power < -2.0 or cfg.disk_thickness_power > 2.0:
             raise ValueError("disk_thickness_power must be in [-2, 2]")
         if cfg.disk_vertical_softness < 0.01 or cfg.disk_vertical_softness > 2.0:
             raise ValueError("disk_vertical_softness must be in [0.01, 2.0]")
+        if cfg.disk_volume_samples < 1 or cfg.disk_volume_samples > 64:
+            raise ValueError("disk_volume_samples must be in [1, 64]")
+        if cfg.disk_volume_density_scale < 0.0 or cfg.disk_volume_density_scale > 1000.0:
+            raise ValueError("disk_volume_density_scale must be in [0, 1000]")
+        if cfg.disk_volume_temperature_drop < 0.0 or cfg.disk_volume_temperature_drop > 1.0:
+            raise ValueError("disk_volume_temperature_drop must be in [0, 1]")
+        if cfg.disk_volume_strength < 0.0 or cfg.disk_volume_strength > 10.0:
+            raise ValueError("disk_volume_strength must be in [0, 10]")
         if cfg.vertical_transition_mode not in {"snap", "continuous"}:
             raise ValueError("vertical_transition_mode must be 'snap' or 'continuous'")
         if cfg.shadow_absorb_radius_factor < 1.0:
@@ -350,14 +461,34 @@ class RenderConfig:
             raise ValueError("temporal_clamp must be > 0")
         if cfg.motion_vector_scale < 0.0:
             raise ValueError("motion_vector_scale must be >= 0")
+        if cfg.temporal_denoise_mode not in {"basic", "robust"}:
+            raise ValueError("temporal_denoise_mode must be 'basic' or 'robust'")
+        if cfg.temporal_denoise_radius < 1 or cfg.temporal_denoise_radius > 4:
+            raise ValueError("temporal_denoise_radius must be in [1, 4]")
+        if cfg.temporal_denoise_sigma <= 0.0:
+            raise ValueError("temporal_denoise_sigma must be > 0")
+        if cfg.temporal_denoise_clip <= 0.0:
+            raise ValueError("temporal_denoise_clip must be > 0")
         if cfg.disk_beaming_strength < 0.0:
             raise ValueError("disk_beaming_strength must be >= 0")
         if not (0.0 <= cfg.disk_self_occlusion_strength <= 1.0):
             raise ValueError("disk_self_occlusion_strength must be in [0, 1]")
+        if cfg.max_disk_crossings < 1 or cfg.max_disk_crossings > 16:
+            raise ValueError("max_disk_crossings must be in [1, 16]")
+        if cfg.lensing_order_strength < 0.0 or cfg.lensing_order_strength > 4.0:
+            raise ValueError("lensing_order_strength must be in [0, 4]")
+        if cfg.lensing_order_gamma < 0.0 or cfg.lensing_order_gamma > 3.0:
+            raise ValueError("lensing_order_gamma must be in [0, 3]")
         if cfg.faraday_rotation_strength < 0.0:
             raise ValueError("faraday_rotation_strength must be >= 0")
-        if cfg.tone_mapper not in {"reinhard", "aces"}:
-            raise ValueError("tone_mapper must be 'reinhard' or 'aces'")
+        if cfg.tone_mapper not in {"reinhard", "aces", "filmic"}:
+            raise ValueError("tone_mapper must be 'reinhard', 'aces', or 'filmic'")
+        if cfg.tone_exposure <= 0.0 or cfg.tone_exposure > 64.0:
+            raise ValueError("tone_exposure must be in (0, 64]")
+        if cfg.tone_white_point <= 0.0 or cfg.tone_white_point > 128.0:
+            raise ValueError("tone_white_point must be in (0, 128]")
+        if cfg.tone_highlight_rolloff < 0.0 or cfg.tone_highlight_rolloff > 4.0:
+            raise ValueError("tone_highlight_rolloff must be in [0, 4]")
         if cfg.postprocess_pipeline not in {"off", "gargantua"}:
             raise ValueError("postprocess_pipeline must be 'off' or 'gargantua'")
         if cfg.gargantua_look_strength < 0.0 or cfg.gargantua_look_strength > 2.0:

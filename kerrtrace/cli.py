@@ -124,6 +124,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disk-temperature-inner", type=float)
     parser.add_argument("--disk-color-correction", type=float)
     parser.add_argument("--disk-plasma-warmth", type=float)
+    parser.add_argument("--disk-palette", choices=["default", "interstellar_warm"])
+    parser.add_argument("--enable-disk-layered-palette", action="store_true")
+    parser.add_argument("--disable-disk-layered-palette", action="store_true")
+    parser.add_argument("--disk-layer-count", type=int)
+    parser.add_argument("--disk-layer-mix", type=float)
+    parser.add_argument("--disk-layer-pattern-count", type=float)
+    parser.add_argument("--disk-layer-pattern-contrast", type=float)
+    parser.add_argument("--disk-layer-time-scale", type=float)
+    parser.add_argument("--disk-layer-global-phase", type=float)
+    parser.add_argument("--disk-layer-phase-rate-hz", type=float)
+    parser.add_argument("--disk-layer-accident-strength", type=float)
+    parser.add_argument("--disk-layer-accident-count", type=float)
+    parser.add_argument("--disk-layer-accident-sharpness", type=float)
+    parser.add_argument("--enable-adaptive-disk-stratification", action="store_true")
+    parser.add_argument("--disable-adaptive-disk-stratification", action="store_true")
+    parser.add_argument("--disk-adaptive-layers-min", type=int)
+    parser.add_argument("--disk-adaptive-layers-max", type=int)
+    parser.add_argument("--disk-adaptive-complexity-mix", type=float)
     parser.add_argument("--disk-emission-gain", type=float)
     parser.add_argument("--disk-structure-mode", choices=["continuous", "concentric_annuli"])
     parser.add_argument("--disk-annuli-count", type=int)
@@ -133,6 +151,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disk-thickness-ratio", type=float)
     parser.add_argument("--disk-thickness-power", type=float)
     parser.add_argument("--disk-vertical-softness", type=float)
+    parser.add_argument("--enable-disk-volume-emission", action="store_true")
+    parser.add_argument("--disable-disk-volume-emission", action="store_true")
+    parser.add_argument("--disk-volume-samples", type=int)
+    parser.add_argument("--disk-volume-density-scale", type=float)
+    parser.add_argument("--disk-volume-temperature-drop", type=float)
+    parser.add_argument("--disk-volume-strength", type=float)
     parser.add_argument("--vertical-transition-mode", choices=["snap", "continuous"])
     parser.add_argument("--disable-black-hole-shadow", action="store_true")
     parser.add_argument("--shadow-absorb-radius-factor", type=float)
@@ -141,6 +165,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--adaptive-atol", type=float)
     parser.add_argument("--adaptive-step-min", type=float)
     parser.add_argument("--adaptive-step-max", type=float)
+    parser.add_argument("--disable-adaptive-event-aware", action="store_true")
+    parser.add_argument("--enable-adaptive-event-aware", action="store_true")
     parser.add_argument("--disable-adaptive-fallback-rk4", action="store_true")
     parser.add_argument("--adaptive-fallback-substeps", type=int)
     parser.add_argument("--kerr-schild-mode", choices=["off", "fsal_only", "analytic"])
@@ -159,20 +185,44 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--compile-rhs", action="store_true")
     parser.add_argument("--mixed-precision", action="store_true")
     parser.add_argument("--mps-optimized-kernel", action="store_true", help="Enable fast MPS-oriented tracing path")
+    parser.add_argument("--disable-mps-auto-chunking", action="store_true")
+    parser.add_argument("--enable-mps-auto-chunking", action="store_true")
     parser.add_argument("--disable-mps-emitter-fastpath", action="store_true")
     parser.add_argument("--enable-temporal-reprojection", action="store_true")
     parser.add_argument("--disable-temporal-reprojection", action="store_true")
+    parser.add_argument("--temporal-denoise-mode", choices=["basic", "robust"])
     parser.add_argument("--temporal-blend", type=float)
     parser.add_argument("--temporal-clamp", type=float)
     parser.add_argument("--motion-vector-scale", type=float)
+    parser.add_argument("--temporal-denoise-radius", type=int)
+    parser.add_argument("--temporal-denoise-sigma", type=float)
+    parser.add_argument("--temporal-denoise-clip", type=float)
     parser.add_argument("--disk-beaming-strength", type=float)
     parser.add_argument("--disk-self-occlusion-strength", type=float)
+    parser.add_argument("--disable-multi-hit-disk", action="store_true")
+    parser.add_argument("--enable-multi-hit-disk", action="store_true")
+    parser.add_argument("--max-disk-crossings", type=int)
+    parser.add_argument("--lensing-order-strength", type=float)
+    parser.add_argument("--lensing-order-gamma", type=float)
     parser.add_argument("--enable-emitter-polarization", action="store_true")
     parser.add_argument("--magnetic-field-strength", type=float)
     parser.add_argument("--faraday-rotation-strength", type=float)
-    parser.add_argument("--tone-mapper", choices=["reinhard", "aces"])
+    parser.add_argument("--tone-mapper", choices=["reinhard", "aces", "filmic"])
+    parser.add_argument("--tone-exposure", type=float)
+    parser.add_argument("--tone-white-point", type=float)
+    parser.add_argument("--tone-highlight-rolloff", type=float)
     parser.add_argument("--postprocess-pipeline", choices=["off", "gargantua"])
     parser.add_argument("--gargantua-look-strength", type=float)
+    parser.add_argument(
+        "--enable-gargantua-look",
+        action="store_true",
+        help="Enable Gargantua-inspired visual preset (thin disk + stronger beaming + filmic/postprocess)",
+    )
+    parser.add_argument(
+        "--disable-gargantua-look",
+        action="store_true",
+        help="Disable Gargantua-inspired visual preset",
+    )
     parser.add_argument("--video-codec", choices=["h264", "h265_10bit"])
     parser.add_argument("--video-crf", type=int)
     parser.add_argument("--render-tile-rows", type=int, help="Render in row tiles (0 disables tiling)")
@@ -406,6 +456,20 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "disk_temperature_inner": args.disk_temperature_inner,
         "disk_color_correction": args.disk_color_correction,
         "disk_plasma_warmth": args.disk_plasma_warmth,
+        "disk_palette": args.disk_palette,
+        "disk_layer_count": args.disk_layer_count,
+        "disk_layer_mix": args.disk_layer_mix,
+        "disk_layer_pattern_count": args.disk_layer_pattern_count,
+        "disk_layer_pattern_contrast": args.disk_layer_pattern_contrast,
+        "disk_layer_time_scale": args.disk_layer_time_scale,
+        "disk_layer_global_phase": args.disk_layer_global_phase,
+        "disk_layer_phase_rate_hz": args.disk_layer_phase_rate_hz,
+        "disk_layer_accident_strength": args.disk_layer_accident_strength,
+        "disk_layer_accident_count": args.disk_layer_accident_count,
+        "disk_layer_accident_sharpness": args.disk_layer_accident_sharpness,
+        "disk_adaptive_layers_min": args.disk_adaptive_layers_min,
+        "disk_adaptive_layers_max": args.disk_adaptive_layers_max,
+        "disk_adaptive_complexity_mix": args.disk_adaptive_complexity_mix,
         "disk_emission_gain": args.disk_emission_gain,
         "disk_structure_mode": args.disk_structure_mode,
         "disk_annuli_count": args.disk_annuli_count,
@@ -413,6 +477,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "disk_thickness_ratio": args.disk_thickness_ratio,
         "disk_thickness_power": args.disk_thickness_power,
         "disk_vertical_softness": args.disk_vertical_softness,
+        "disk_volume_samples": args.disk_volume_samples,
+        "disk_volume_density_scale": args.disk_volume_density_scale,
+        "disk_volume_temperature_drop": args.disk_volume_temperature_drop,
+        "disk_volume_strength": args.disk_volume_strength,
         "vertical_transition_mode": args.vertical_transition_mode,
         "shadow_absorb_radius_factor": args.shadow_absorb_radius_factor,
         "adaptive_rtol": args.adaptive_rtol,
@@ -423,16 +491,27 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "kerr_schild_mode": args.kerr_schild_mode,
         "kerr_schild_null_norm_interval": args.kerr_schild_null_interval,
         "kerr_schild_null_norm_tol": args.kerr_schild_null_tol,
+        "temporal_denoise_mode": args.temporal_denoise_mode,
         "temporal_blend": args.temporal_blend,
         "temporal_clamp": args.temporal_clamp,
         "motion_vector_scale": args.motion_vector_scale,
+        "temporal_denoise_radius": args.temporal_denoise_radius,
+        "temporal_denoise_sigma": args.temporal_denoise_sigma,
+        "temporal_denoise_clip": args.temporal_denoise_clip,
         "disk_beaming_strength": args.disk_beaming_strength,
         "disk_self_occlusion_strength": args.disk_self_occlusion_strength,
+        "max_disk_crossings": args.max_disk_crossings,
+        "lensing_order_strength": args.lensing_order_strength,
+        "lensing_order_gamma": args.lensing_order_gamma,
         "magnetic_field_strength": args.magnetic_field_strength,
         "faraday_rotation_strength": args.faraday_rotation_strength,
         "tone_mapper": args.tone_mapper,
+        "tone_exposure": args.tone_exposure,
+        "tone_white_point": args.tone_white_point,
+        "tone_highlight_rolloff": args.tone_highlight_rolloff,
         "postprocess_pipeline": args.postprocess_pipeline,
         "gargantua_look_strength": args.gargantua_look_strength,
+        "gargantua_look_preset": None,
         "video_codec": args.video_codec,
         "video_crf": args.video_crf,
         "render_tile_rows": args.render_tile_rows,
@@ -479,10 +558,26 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["thick_disk"] = True
     if args.thin_disk:
         updates["thick_disk"] = False
+    if args.enable_disk_layered_palette:
+        updates["disk_layered_palette"] = True
+    if args.disable_disk_layered_palette:
+        updates["disk_layered_palette"] = False
+    if args.enable_adaptive_disk_stratification:
+        updates["disk_adaptive_stratification"] = True
+    if args.disable_adaptive_disk_stratification:
+        updates["disk_adaptive_stratification"] = False
+    if args.enable_disk_volume_emission:
+        updates["disk_volume_emission"] = True
+    if args.disable_disk_volume_emission:
+        updates["disk_volume_emission"] = False
     if args.disable_black_hole_shadow:
         updates["enforce_black_hole_shadow"] = False
     if args.disable_adaptive_integrator:
         updates["adaptive_integrator"] = False
+    if args.disable_adaptive_event_aware:
+        updates["adaptive_event_aware"] = False
+    if args.enable_adaptive_event_aware:
+        updates["adaptive_event_aware"] = True
     if args.disable_adaptive_fallback_rk4:
         updates["adaptive_fallback_rk4"] = False
     if args.disable_kerr_schild_improvements:
@@ -500,6 +595,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["mixed_precision"] = True
     if args.mps_optimized_kernel:
         updates["mps_optimized_kernel"] = True
+    if args.disable_mps_auto_chunking:
+        updates["mps_auto_chunking"] = False
+    if args.enable_mps_auto_chunking:
+        updates["mps_auto_chunking"] = True
     if args.disable_mps_emitter_fastpath:
         updates["allow_mps_emitter_fastpath"] = False
     if args.disable_camera_fastpath:
@@ -526,6 +625,14 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["temporal_reprojection"] = False
     if args.enable_emitter_polarization:
         updates["enable_emitter_polarization"] = True
+    if args.enable_gargantua_look:
+        updates["gargantua_look_preset"] = True
+    if args.disable_gargantua_look:
+        updates["gargantua_look_preset"] = False
+    if args.disable_multi_hit_disk:
+        updates["multi_hit_disk"] = False
+    if args.enable_multi_hit_disk:
+        updates["multi_hit_disk"] = True
     if args.disable_progress_bar:
         updates["show_progress_bar"] = False
     if args.enable_progress_bar:

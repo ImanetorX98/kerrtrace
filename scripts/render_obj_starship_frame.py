@@ -446,6 +446,7 @@ def main() -> None:
     parser.add_argument("--ship-radius", type=float, default=20.0)
     parser.add_argument("--ship-theta-deg", type=float, default=87.0)
     parser.add_argument("--ship-phi-deg", type=float, default=0.0)
+    parser.add_argument("--ship-z-offset", type=float, default=0.0, help="Vertical offset along BH spin axis (in M units)")
     parser.add_argument("--ship-size", type=float, default=1.9, help="Characteristic ship size in M units")
     parser.add_argument("--ship-yaw-deg", type=float, default=34.0)
     parser.add_argument("--ship-pitch-deg", type=float, default=-12.0)
@@ -507,6 +508,7 @@ def main() -> None:
         .numpy()
         .astype(np.float32)
     )
+    ship_pos[2] += float(args.ship_z_offset)
 
     # Local-to-world basis: x->right, y->up, z->toward camera.
     basis = np.stack([right, up, -forward], axis=1)

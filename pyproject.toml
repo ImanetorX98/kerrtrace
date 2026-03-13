@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kerrtrace"
-version = "0.1.0"
+version = "1.0.1"
 description = "GPU-accelerated gravitational ray tracing of a Kerr black hole with accretion disk"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,11 +14,13 @@ dependencies = [
   "numpy<2",
   "click>=8.1",
   "streamlit>=1.35",
-  "tqdm>=4.66"
+  "tqdm>=4.66",
+  "imageio>=2.34"
 ]
 
 [project.scripts]
 kerrtrace = "kerrtrace.cli:main"
+kerrtrace-ui = "kerrtrace.desktop_launcher:main"
 
 [tool.setuptools.packages.find]
 include = ["kerrtrace*"]

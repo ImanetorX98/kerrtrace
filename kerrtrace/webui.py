@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import asdict, replace
 from datetime import datetime
 import json
+import math
 import os
 from pathlib import Path
 import re
 import select
 import subprocess
 import sys
+import time
 from typing import Any
 
+from PIL import Image, ImageStat
 import streamlit as st
 
 if os.name == "posix":
@@ -20,8 +24,10 @@ else:
 
 try:
     from .config import RenderConfig
+    from .geometry import event_horizon_radius, horizon_radii
 except ImportError:
     from kerrtrace.config import RenderConfig
+    from kerrtrace.geometry import event_horizon_radius, horizon_radii
 
 
 QUALITY_PRESETS: dict[str, tuple[int, int]] = {
@@ -48,14 +54,16 @@ CHOICE_FIELDS: dict[str, list[str]] = {
     ],
     "disk_model": ["physical_nt", "legacy"],
     "disk_radial_profile": ["nt_proxy", "nt_page_thorne"],
+    "disk_palette": ["default", "interstellar_warm"],
     "background_mode": ["procedural", "hdri"],
     "background_projection": ["cubemap", "equirectangular"],
     "kerr_schild_mode": ["off", "fsal_only", "analytic"],
     "device": ["auto", "cpu", "cuda", "mps"],
     "dtype": ["float32", "float64"],
     "progress_backend": ["manual", "tqdm", "auto"],
+    "temporal_denoise_mode": ["basic", "robust"],
     "video_codec": ["h264", "h265_10bit"],
-    "tone_mapper": ["reinhard", "aces"],
+    "tone_mapper": ["reinhard", "aces", "filmic"],
     "postprocess_pipeline": ["off", "gargantua"],
 }
 
@@ -63,10 +71,27 @@ AUTHOR_SIGNATURE = "Iman Rosignoli"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".gif"}
 MEDIA_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
+PRESET_CRITICAL_FIELDS: list[str] = [
+    "coordinate_system",
+    "metric_model",
+    "spin",
+    "charge",
+    "cosmological_constant",
+    "observer_radius",
+    "observer_inclination_deg",
+    "disk_inner_radius",
+    "disk_outer_radius",
+    "step_size",
+    "max_steps",
+    "device",
+    "dtype",
+]
 
 LANGUAGE_OPTIONS: dict[str, str] = {
     "it": "Italiano",
     "en": "English",
+    "es": "Español",
+    "fr": "Français",
     "de": "Deutsch",
     "ro": "Română",
     "zh": "中文(简体)",
@@ -407,6 +432,9 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Width": "Larghezza",
         "Height": "Altezza",
         "Output file": "File di output",
+        "Compose output path from folder + filename": "Componi output da cartella + nome file",
+        "Output directory": "Cartella output",
+        "Output file name": "Nome file output",
         "FOV (deg)": "FOV (gradi)",
         "Coordinate system": "Sistema di coordinate",
         "Metric model": "Modello metrico",
@@ -429,6 +457,10 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "r_in = default (ISCO)": "r_in = default (ISCO)",
         "Disk inner radius": "Raggio interno del disco",
         "Disk emission gain": "Guadagno emissione disco",
+        "Disk palette": "Palette disco",
+        "Enable layered disk": "Abilita disco stratificato",
+        "Layer count": "Numero strati",
+        "Layer mix": "Mix strati",
         "Max steps": "Max step",
         "Step size": "Dimensione step",
         "Adaptive integrator": "Integratore adattivo",
@@ -530,6 +562,10 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "r_in = default (ISCO)": "r_in = Standard (ISCO)",
         "Disk inner radius": "Innenradius der Scheibe",
         "Disk emission gain": "Scheiben-Emissionsverstärkung",
+        "Disk palette": "Scheibenpalette",
+        "Enable layered disk": "Geschichtete Scheibe aktivieren",
+        "Layer count": "Anzahl Schichten",
+        "Layer mix": "Schichtmischung",
         "Max steps": "Maximale Schritte",
         "Step size": "Schrittweite",
         "Adaptive integrator": "Adaptiver Integrator",
@@ -624,6 +660,10 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "High Fidelity": "Alta fidelidad",
         "Disk inner radius": "Radio interior del disco",
         "Disk emission gain": "Ganancia de emisión del disco",
+        "Disk palette": "Paleta del disco",
+        "Enable layered disk": "Activar disco por capas",
+        "Layer count": "Número de capas",
+        "Layer mix": "Mezcla de capas",
         "Max steps": "Pasos máximos",
         "Step size": "Tamaño de paso",
         "Adaptive integrator": "Integrador adaptativo",
@@ -660,6 +700,10 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "GPU Balanced (Recommended)": "GPU équilibré (recommandé)",
         "Fast Preview": "Aperçu rapide",
         "High Fidelity": "Haute fidélité",
+        "Disk palette": "Palette du disque",
+        "Enable layered disk": "Activer disque stratifié",
+        "Layer count": "Nombre de couches",
+        "Layer mix": "Mélange des couches",
         "Background": "Arrière-plan",
         "Video parameters": "Paramètres vidéo",
         "Advanced JSON override (optional)": "Surcharge JSON avancée (optionnel)",
@@ -684,6 +728,10 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "GPU Balanced (Recommended)": "GPU equilibrada (Recomendado)",
         "Fast Preview": "Pré-visualização rápida",
         "High Fidelity": "Alta fidelidade",
+        "Disk palette": "Paleta do disco",
+        "Enable layered disk": "Ativar disco em camadas",
+        "Layer count": "Número de camadas",
+        "Layer mix": "Mistura de camadas",
         "Background": "Fundo",
         "Video parameters": "Parâmetros de vídeo",
         "Advanced JSON override (optional)": "Substituição JSON avançada (opcional)",
@@ -717,6 +765,10 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "r_in = default (ISCO)": "r_in = implicit (ISCO)",
         "Disk inner radius": "Raza internă a discului",
         "Disk emission gain": "Amplificare emisie disc",
+        "Disk palette": "Paleta discului",
+        "Enable layered disk": "Activează disc stratificat",
+        "Layer count": "Număr straturi",
+        "Layer mix": "Mix straturi",
         "Max steps": "Pași maximi",
         "Step size": "Mărime pas",
         "Adaptive integrator": "Integrator adaptiv",
@@ -818,6 +870,10 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "r_in = default (ISCO)": "r_in = 默认（ISCO）",
         "Disk inner radius": "吸积盘内半径",
         "Disk emission gain": "吸积盘发射增益",
+        "Disk palette": "吸积盘调色板",
+        "Enable layered disk": "启用分层吸积盘",
+        "Layer count": "层数",
+        "Layer mix": "层混合比例",
         "Max steps": "最大步数",
         "Step size": "步长",
         "Adaptive integrator": "自适应积分器",
@@ -945,12 +1001,21 @@ def _run_command_live(
     cwd: Path,
     log_placeholder: Any,
     progress_widget: Any | None = None,
+    frame_preview_placeholder: Any | None = None,
 ) -> tuple[int, str]:
     chunks: list[str] = []
     max_log_chars = 120_000
     progress_re = re.compile(r"(\d+)\s*/\s*(\d+)")
+    frame_line_re = re.compile(r"Frame\s+(\d+)\s*/\s*(\d+):\s*([^|]+)")
+    frame_dt_re = re.compile(r"\|\s*frame\s*([0-9]*\.?[0-9]+)s")
     pending = ""
     last_progress_key: tuple[int, int] | None = None
+    last_frame_key: tuple[int, int] | None = None
+    seen_frame_progress = False
+    last_row_t: float | None = None
+    last_frame_t: float | None = None
+    row_sec_per_unit: deque[float] = deque(maxlen=12)
+    frame_sec_per_unit: deque[float] = deque(maxlen=12)
 
     def _push(text: str) -> None:
         chunks.append(text)
@@ -961,10 +1026,63 @@ def _run_command_live(
         log_placeholder.code(joined, language="bash")
 
     def _process_line(line: str, from_carriage: bool) -> None:
-        nonlocal last_progress_key
+        nonlocal last_progress_key, last_frame_key, seen_frame_progress, last_row_t, last_frame_t
         if not line:
             return
         stripped = line.strip()
+        frame_match = frame_line_re.search(stripped)
+        if frame_match:
+            seen_frame_progress = True
+            done_f = int(frame_match.group(1))
+            total_f = int(frame_match.group(2))
+            key_f = (done_f, total_f)
+            now = time.perf_counter()
+            if last_frame_key is not None and key_f[1] == last_frame_key[1] and key_f[0] > last_frame_key[0]:
+                if last_frame_t is not None:
+                    dt = max(1.0e-6, now - last_frame_t)
+                    frame_sec_per_unit.append(dt / float(key_f[0] - last_frame_key[0]))
+            explicit_dt = None
+            dt_match = frame_dt_re.search(stripped)
+            if dt_match is not None:
+                try:
+                    explicit_dt = float(dt_match.group(1))
+                except Exception:
+                    explicit_dt = None
+            if explicit_dt is not None and explicit_dt > 0.0:
+                frame_sec_per_unit.append(explicit_dt)
+            eta_f = None
+            if frame_sec_per_unit and total_f > done_f:
+                avg = float(sum(frame_sec_per_unit)) / float(len(frame_sec_per_unit))
+                eta_f = avg * float(total_f - done_f)
+            if progress_widget is not None and total_f > 0 and key_f != last_frame_key:
+                ratio = max(0.0, min(1.0, float(done_f) / float(total_f)))
+                progress_widget.progress(
+                    ratio,
+                    text=f"Frames: {done_f}/{total_f} ({ratio * 100.0:.1f}%) ETA ~{_format_eta_short(eta_f)}",
+                )
+            if key_f != last_frame_key and frame_preview_placeholder is not None:
+                raw_path = frame_match.group(3).strip().strip("'").strip('"')
+                if raw_path and (not raw_path.startswith("(")):
+                    frame_path = Path(raw_path).expanduser()
+                    if not frame_path.is_absolute():
+                        frame_path = cwd / frame_path
+                    try:
+                        frame_path = frame_path.resolve()
+                    except Exception:
+                        frame_path = frame_path.absolute()
+                    if frame_path.exists():
+                        try:
+                            frame_preview_placeholder.image(
+                                str(frame_path),
+                                caption=f"Live frame {done_f}/{total_f}",
+                            )
+                        except Exception:
+                            pass
+            last_frame_key = key_f
+            last_frame_t = now
+            _push(stripped + "\n")
+            return
+
         if stripped.startswith("Render rows"):
             matches = progress_re.findall(stripped)
             if matches:
@@ -973,12 +1091,22 @@ def _run_command_live(
                 # Ignore ticker refreshes when progress did not advance.
                 if key == last_progress_key:
                     return
+                now = time.perf_counter()
+                if last_progress_key is not None and key[1] == last_progress_key[1] and key[0] > last_progress_key[0]:
+                    if last_row_t is not None:
+                        dt = max(1.0e-6, now - last_row_t)
+                        row_sec_per_unit.append(dt / float(key[0] - last_progress_key[0]))
                 last_progress_key = key
-                if progress_widget is not None and key[1] > 0:
+                last_row_t = now
+                eta_s = None
+                if row_sec_per_unit and key[1] > key[0]:
+                    avg = float(sum(row_sec_per_unit)) / float(len(row_sec_per_unit))
+                    eta_s = avg * float(key[1] - key[0])
+                if (not seen_frame_progress) and progress_widget is not None and key[1] > 0:
                     ratio = max(0.0, min(1.0, float(key[0]) / float(key[1])))
                     progress_widget.progress(
                         ratio,
-                        text=f"Render rows: {key[0]}/{key[1]} ({ratio * 100.0:.1f}%)",
+                        text=f"Render rows: {key[0]}/{key[1]} ({ratio * 100.0:.1f}%) ETA ~{_format_eta_short(eta_s)}",
                     )
             _push(stripped + "\n")
             return
@@ -1037,13 +1165,21 @@ def _run_command_live(
     if pending:
         _process_line(pending, from_carriage=False)
 
-    if progress_widget is not None and last_progress_key is not None and last_progress_key[1] > 0:
-        done, total = last_progress_key
-        ratio = max(0.0, min(1.0, float(done) / float(total)))
-        progress_widget.progress(
-            ratio,
-            text=f"Render rows: {done}/{total} ({ratio * 100.0:.1f}%)",
-        )
+    if progress_widget is not None:
+        if seen_frame_progress and last_frame_key is not None and last_frame_key[1] > 0:
+            done, total = last_frame_key
+            ratio = max(0.0, min(1.0, float(done) / float(total)))
+            progress_widget.progress(
+                ratio,
+                text=f"Frames: {done}/{total} ({ratio * 100.0:.1f}%)",
+            )
+        elif last_progress_key is not None and last_progress_key[1] > 0:
+            done, total = last_progress_key
+            ratio = max(0.0, min(1.0, float(done) / float(total)))
+            progress_widget.progress(
+                ratio,
+                text=f"Render rows: {done}/{total} ({ratio * 100.0:.1f}%)",
+            )
 
     return rc, "".join(chunks)
 
@@ -1144,6 +1280,85 @@ def _extract_output_path_from_log(log_text: str, workspace_path: Path) -> Path |
     return None
 
 
+def _extract_latest_frame_path_from_log(log_text: str, workspace_path: Path) -> Path | None:
+    if not log_text:
+        return None
+    frame_re = re.compile(r"Frame\s+\d+\s*/\s*\d+:\s*([^|]+)")
+    lines = [_strip_ansi(ln).strip() for ln in log_text.splitlines()]
+    for line in reversed(lines):
+        m = frame_re.search(line)
+        if m is None:
+            continue
+        raw = m.group(1).strip().strip("'").strip('"')
+        if (not raw) or raw.startswith("("):
+            continue
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = workspace_path / p
+        try:
+            p = p.resolve()
+        except Exception:
+            p = p.absolute()
+        if p.exists():
+            return p
+    return None
+
+
+def _estimate_eta_from_log(log_text: str) -> str | None:
+    if not log_text:
+        return None
+    lines = [_strip_ansi(ln).strip() for ln in log_text.splitlines() if ln.strip()]
+    frame_re = re.compile(r"Frame\s+(\d+)\s*/\s*(\d+):")
+    frame_dt_re = re.compile(r"\|\s*frame\s*([0-9]*\.?[0-9]+)s")
+    row_re = re.compile(r"Render rows:\s*(\d+)\s*/\s*(\d+)")
+    row_dt_re = re.compile(r"([0-9]*\.?[0-9]+)s/row")
+
+    frame_done_total: tuple[int, int] | None = None
+    frame_dts: list[float] = []
+    for line in reversed(lines):
+        fm = frame_re.search(line)
+        if fm is not None and frame_done_total is None:
+            frame_done_total = (int(fm.group(1)), int(fm.group(2)))
+        fdt = frame_dt_re.search(line)
+        if fdt is not None:
+            try:
+                val = float(fdt.group(1))
+                if val > 0.0:
+                    frame_dts.append(val)
+            except Exception:
+                pass
+        if frame_done_total is not None and len(frame_dts) >= 8:
+            break
+    if frame_done_total is not None:
+        done, total = frame_done_total
+        if total > done and frame_dts:
+            avg = float(sum(frame_dts)) / float(len(frame_dts))
+            return f"Frames {done}/{total} ETA ~{_format_eta_short(avg * float(total - done))}"
+
+    row_done_total: tuple[int, int] | None = None
+    row_dts: list[float] = []
+    for line in reversed(lines):
+        rm = row_re.search(line)
+        if rm is not None and row_done_total is None:
+            row_done_total = (int(rm.group(1)), int(rm.group(2)))
+        rdt = row_dt_re.search(line)
+        if rdt is not None:
+            try:
+                val = float(rdt.group(1))
+                if val > 0.0:
+                    row_dts.append(val)
+            except Exception:
+                pass
+        if row_done_total is not None and len(row_dts) >= 8:
+            break
+    if row_done_total is not None:
+        done, total = row_done_total
+        if total > done and row_dts:
+            avg = float(sum(row_dts)) / float(len(row_dts))
+            return f"Rows {done}/{total} ETA ~{_format_eta_short(avg * float(total - done))}"
+    return None
+
+
 def _tail_text_file(path: Path, max_chars: int = 120_000) -> str:
     if not path.exists():
         return ""
@@ -1214,6 +1429,149 @@ def _resolve_output_file(
     return _latest_media_in_out(workspace_path=workspace_path, suffix=preferred_suffix)
 
 
+def _benchmark_single_config(
+    *,
+    python_exec: str,
+    workspace_path: Path,
+    cfg_path: Path,
+    output_path: Path,
+    require_gpu: bool,
+    timeout_s: float = 240.0,
+) -> tuple[bool, float, str]:
+    cmd = [
+        str(python_exec),
+        "-m",
+        "kerrtrace",
+        "--config",
+        str(cfg_path),
+        "--output",
+        str(output_path),
+    ]
+    if require_gpu:
+        cmd.append("--require-gpu")
+    t0 = time.perf_counter()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workspace_path),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+        elapsed = max(0.0, float(time.perf_counter() - t0))
+        ok = proc.returncode == 0 and output_path.exists()
+        log = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    except subprocess.TimeoutExpired as exc:
+        elapsed = max(0.0, float(time.perf_counter() - t0))
+        ok = False
+        log = f"autotune timeout after {timeout_s:.1f}s: {exc}"
+    if len(log) > 6000:
+        log = log[-6000:]
+    return ok, elapsed, log.strip()
+
+
+def _autotune_quick_device_and_tiling(
+    *,
+    python_exec: str,
+    workspace_path: Path,
+    run_dir: Path,
+    cfg_obj: RenderConfig,
+    require_gpu: bool,
+) -> tuple[RenderConfig, list[dict[str, Any]]]:
+    bench_width = int(min(320, max(144, cfg_obj.width)))
+    bench_height = int(max(96, round(float(cfg_obj.height) * (float(bench_width) / max(1.0, float(cfg_obj.width))))))
+    bench_steps = int(max(96, min(int(cfg_obj.max_steps), 240)))
+
+    device_candidates = [str(cfg_obj.device)]
+    if str(cfg_obj.device) == "auto":
+        device_candidates = ["mps", "cuda", "cpu"]
+    if require_gpu:
+        device_candidates = [d for d in device_candidates if d in {"mps", "cuda"}]
+        if not device_candidates:
+            return cfg_obj, [{"candidate": "none", "ok": False, "reason": "require_gpu=True and no GPU candidates"}]
+
+    report: list[dict[str, Any]] = []
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    best_device: str | None = None
+    best_device_t = float("inf")
+    for dev in device_candidates:
+        out_path = run_dir / f"autotune_device_{dev}_{stamp}.png"
+        cfg_bench = replace(
+            cfg_obj,
+            width=bench_width,
+            height=bench_height,
+            max_steps=bench_steps,
+            render_tile_rows=0,
+            show_progress_bar=False,
+            device=dev,
+            output=str(out_path),
+        )
+        cfg_path = run_dir / f"autotune_device_{dev}_{stamp}.json"
+        cfg_path.write_text(json.dumps(asdict(cfg_bench), indent=2), encoding="utf-8")
+        ok, elapsed, log = _benchmark_single_config(
+            python_exec=python_exec,
+            workspace_path=workspace_path,
+            cfg_path=cfg_path,
+            output_path=out_path,
+            require_gpu=require_gpu,
+        )
+        report.append({"stage": "device", "candidate": dev, "ok": ok, "elapsed_s": elapsed, "log_tail": log})
+        if ok and elapsed < best_device_t:
+            best_device_t = elapsed
+            best_device = dev
+
+    if best_device is None:
+        return cfg_obj, report
+
+    tile_candidates = [0]
+    if bench_height >= 256:
+        tile_candidates += [64, 128]
+    elif bench_height >= 144:
+        tile_candidates += [48, 96]
+
+    best_tile = int(cfg_obj.render_tile_rows) if int(cfg_obj.render_tile_rows) > 0 else 0
+    best_tile_t = float("inf")
+    for tile in tile_candidates:
+        out_path = run_dir / f"autotune_tile_{best_device}_{tile}_{stamp}.png"
+        cfg_bench = replace(
+            cfg_obj,
+            width=bench_width,
+            height=bench_height,
+            max_steps=bench_steps,
+            render_tile_rows=int(tile),
+            show_progress_bar=False,
+            device=best_device,
+            output=str(out_path),
+        )
+        cfg_path = run_dir / f"autotune_tile_{best_device}_{tile}_{stamp}.json"
+        cfg_path.write_text(json.dumps(asdict(cfg_bench), indent=2), encoding="utf-8")
+        ok, elapsed, log = _benchmark_single_config(
+            python_exec=python_exec,
+            workspace_path=workspace_path,
+            cfg_path=cfg_path,
+            output_path=out_path,
+            require_gpu=require_gpu,
+        )
+        report.append(
+            {
+                "stage": "tiling",
+                "candidate": f"{best_device}/tile={tile}",
+                "ok": ok,
+                "elapsed_s": elapsed,
+                "log_tail": log,
+            }
+        )
+        if ok and elapsed < best_tile_t:
+            best_tile_t = elapsed
+            best_tile = int(tile)
+
+    tuned = replace(cfg_obj, device=best_device, render_tile_rows=int(best_tile))
+    if best_device == "mps":
+        tuned = replace(tuned, mps_optimized_kernel=True)
+    return tuned, report
+
+
 def _resolve_manual_media_path(raw_path: str, workspace_path: Path) -> tuple[Path | None, str]:
     raw = str(raw_path or "").strip()
     if not raw:
@@ -1230,6 +1588,245 @@ def _resolve_manual_media_path(raw_path: str, workspace_path: Path) -> tuple[Pat
     if path.suffix.lower() not in MEDIA_SUFFIXES:
         return None, "unsupported"
     return path, ""
+
+
+def _format_eta_short(seconds: float | None) -> str:
+    if seconds is None or (not math.isfinite(seconds)) or seconds < 0.0:
+        return "--:--"
+    total = int(round(seconds))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h:d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def _preset_dir(workspace_path: Path) -> Path:
+    return (workspace_path / "out" / "webui_presets").resolve()
+
+
+def _list_presets(workspace_path: Path) -> list[Path]:
+    root = _preset_dir(workspace_path)
+    if not root.exists():
+        return []
+    return sorted(
+        [p for p in root.glob("*.json") if p.is_file()],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def _load_preset(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Preset file must contain a JSON object")
+    if "config" in payload and isinstance(payload["config"], dict):
+        cfg = dict(payload["config"])
+        meta = dict(payload.get("meta") or {})
+        return cfg, meta
+    # backward-compatible: plain config object
+    return dict(payload), {}
+
+
+def _save_preset(
+    *,
+    path: Path,
+    config_payload: dict[str, Any],
+    tags: list[str],
+    critical_fields: list[str],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "meta": {
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+            "tags": tags,
+            "critical_fields": critical_fields,
+        },
+        "config": config_payload,
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _hist_ratio(hist: list[int], lo: int, hi: int) -> float:
+    total = float(sum(hist))
+    if total <= 0.0:
+        return 0.0
+    lo_i = max(0, int(lo))
+    hi_i = min(255, int(hi))
+    if hi_i < lo_i:
+        return 0.0
+    return float(sum(hist[lo_i : hi_i + 1])) / total
+
+
+def _analyze_dryrun_image(image_path: Path) -> tuple[bool, list[str], dict[str, float]]:
+    reasons: list[str] = []
+    metrics: dict[str, float] = {}
+    try:
+        with Image.open(image_path) as img:
+            gray = img.convert("L")
+            if gray.width > 768:
+                new_h = max(64, int(round(gray.height * (768.0 / float(gray.width)))))
+                resampling = getattr(getattr(Image, "Resampling", Image), "BILINEAR")
+                gray = gray.resize((768, new_h), resample=resampling)
+            hist = gray.histogram()
+            stat = ImageStat.Stat(gray)
+            mean_l = float(stat.mean[0])
+            std_l = float(stat.stddev[0])
+            dark_ratio = _hist_ratio(hist, 0, 8)
+            bright_ratio = _hist_ratio(hist, 220, 255)
+
+            cw = gray.width
+            ch = gray.height
+            cx0 = int(cw * 0.35)
+            cx1 = int(cw * 0.65)
+            cy0 = int(ch * 0.35)
+            cy1 = int(ch * 0.65)
+            center = gray.crop((cx0, cy0, cx1, cy1))
+            center_hist = center.histogram()
+            center_dark_ratio = _hist_ratio(center_hist, 0, 16)
+
+            band = max(2, int(round(min(cw, ch) * 0.05)))
+            top = gray.crop((0, 0, cw, band))
+            bottom = gray.crop((0, ch - band, cw, ch))
+            left = gray.crop((0, 0, band, ch))
+            right = gray.crop((cw - band, 0, cw, ch))
+            border_bright_ratio = (
+                _hist_ratio(top.histogram(), 210, 255)
+                + _hist_ratio(bottom.histogram(), 210, 255)
+                + _hist_ratio(left.histogram(), 210, 255)
+                + _hist_ratio(right.histogram(), 210, 255)
+            ) / 4.0
+
+            metrics = {
+                "mean_luma": mean_l,
+                "std_luma": std_l,
+                "dark_ratio": dark_ratio,
+                "bright_ratio": bright_ratio,
+                "center_dark_ratio": center_dark_ratio,
+                "border_bright_ratio": border_bright_ratio,
+            }
+
+            # Strong failure signatures only: keep this conservative to avoid false negatives.
+            if mean_l < 2.0 and std_l < 1.2:
+                reasons.append("Frame quasi nero/uniforme (luma media e contrasto troppo bassi).")
+            if dark_ratio > 0.985 and bright_ratio < 0.001:
+                reasons.append("Frame quasi completamente nero (assenza segnale utile).")
+            if center_dark_ratio < 0.06:
+                reasons.append("Centro poco oscuro: possibile assenza della shadow del buco nero.")
+            if border_bright_ratio > 0.30 and bright_ratio > 0.08:
+                reasons.append("Bordo molto luminoso: possibile disco tagliato o inquadratura fuori scala.")
+    except Exception as exc:
+        reasons.append(f"Impossibile analizzare il dry-run: {exc}")
+    return len(reasons) == 0, reasons, metrics
+
+
+def _preflight_physical_checks(
+    cfg_obj: RenderConfig,
+    mode: str,
+    video_params: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        horizon = float(
+            event_horizon_radius(
+                cfg_obj.spin,
+                cfg_obj.metric_model,
+                cfg_obj.charge,
+                cfg_obj.cosmological_constant,
+            )
+        )
+    except Exception as exc:
+        return [f"Impossibile determinare l'orizzonte degli eventi: {exc}"], warnings
+
+    rin = float(cfg_obj.disk_inner_radius or 0.0)
+    rout = float(cfg_obj.disk_outer_radius)
+    robs = float(cfg_obj.observer_radius)
+    coord = str(cfg_obj.coordinate_system)
+    model = str(cfg_obj.metric_model)
+
+    if robs < rout * 0.55:
+        warnings.append(
+            "Observer radius molto vicino al disco esterno: alto rischio di inquadratura parziale o deformazioni estreme."
+        )
+    if robs > 120.0 and mode == "video":
+        warnings.append(
+            "Observer radius molto grande: il buco nero potrebbe risultare troppo piccolo nel video."
+        )
+    if rin < max(1.03 * horizon, horizon + 0.05):
+        warnings.append(
+            "r_in è molto vicino all'orizzonte: il disco interno può diventare numericamente instabile."
+        )
+
+    if model.endswith("_de_sitter"):
+        try:
+            roots = horizon_radii(cfg_obj.spin, model, cfg_obj.charge, cfg_obj.cosmological_constant)
+            if len(roots) >= 2:
+                cosmological_horizon = float(roots[-1])
+                if robs > 0.94 * cosmological_horizon:
+                    warnings.append(
+                        "Observer radius vicino all'orizzonte cosmologico: possibile distorsione non fisica del background."
+                    )
+        except Exception:
+            pass
+
+    if mode == "video":
+        r_start = video_params.get("observer_radius_start")
+        r_end = video_params.get("observer_radius_end")
+        for label, val in (("observer_radius_start", r_start), ("observer_radius_end", r_end)):
+            if val is None:
+                continue
+            rv = float(val)
+            if coord != "generalized_doran" and rv <= 1.01 * horizon:
+                errors.append(
+                    f"{label}={rv:.4g} è dentro/attaccato all'orizzonte ma il sistema di coordinate non è generalized_doran."
+                )
+            elif coord == "generalized_doran" and rv <= 1.01 * horizon:
+                warnings.append(
+                    f"{label}={rv:.4g} attraversa l'orizzonte (ok in generalized_doran, ma fisicamente molto estremo)."
+                )
+        i_start = video_params.get("inclination_start_deg")
+        i_end = video_params.get("inclination_end_deg")
+        if (i_start is not None) and (i_end is not None):
+            if math.isclose(float(i_start), float(i_end), abs_tol=1.0e-6):
+                warnings.append("Inclination sweep nullo: il video non cambierà piano di vista.")
+    return errors, warnings
+
+
+def _launch_background_process(
+    *,
+    cmd: list[str],
+    workspace_path: Path,
+    log_path: Path,
+    cfg_path: Path,
+    output_hint: str,
+    stamp: str,
+    job_id: str,
+) -> tuple[subprocess.Popen[Any], dict[str, Any]]:
+    log_file = log_path.open("w", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(workspace_path),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    finally:
+        log_file.close()
+    meta = {
+        "job_id": job_id,
+        "started_at": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "queued_stamp": stamp,
+        "cfg_path": str(cfg_path),
+        "log_path": str(log_path),
+        "workspace": str(workspace_path),
+        "output_hint": str(output_hint),
+        "cmd": " ".join(cmd),
+        "history_recorded": False,
+    }
+    return proc, meta
 
 
 def main() -> None:
@@ -1256,6 +1853,22 @@ def main() -> None:
         st.session_state["async_proc"] = None
     if "async_meta" not in st.session_state:
         st.session_state["async_meta"] = {}
+    if "async_queue" not in st.session_state:
+        st.session_state["async_queue"] = []
+    if "job_history" not in st.session_state:
+        st.session_state["job_history"] = []
+    if "job_counter" not in st.session_state:
+        st.session_state["job_counter"] = 0
+    if "preset_loaded_cfg" not in st.session_state:
+        st.session_state["preset_loaded_cfg"] = {}
+    if "preset_lock_active" not in st.session_state:
+        st.session_state["preset_lock_active"] = False
+    if "preset_locked_values" not in st.session_state:
+        st.session_state["preset_locked_values"] = {}
+    if "preset_locked_fields" not in st.session_state:
+        st.session_state["preset_locked_fields"] = []
+    if "preset_loaded_name" not in st.session_state:
+        st.session_state["preset_loaded_name"] = ""
     last_output_raw = str(st.session_state.get("last_output_path") or "").strip()
     if last_output_raw:
         last_output = Path(last_output_raw)
@@ -1265,6 +1878,97 @@ def main() -> None:
 
     async_proc = st.session_state.get("async_proc")
     async_meta = st.session_state.get("async_meta") or {}
+    queue_entries = list(st.session_state.get("async_queue") or [])
+    history_entries = list(st.session_state.get("job_history") or [])
+
+    # Finalize completed active job and auto-start next queued job.
+    if async_proc is not None and isinstance(async_meta, dict) and async_meta:
+        rc_now = async_proc.poll()
+        if rc_now is not None and not bool(async_meta.get("history_recorded", False)):
+            finished_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            history_entries.append(
+                {
+                    "job_id": str(async_meta.get("job_id", "job?")),
+                    "status": "done" if int(rc_now) == 0 else "failed",
+                    "exit": int(rc_now),
+                    "started_at": str(async_meta.get("started_at", "")),
+                    "finished_at": finished_ts,
+                    "output_hint": str(async_meta.get("output_hint", "")),
+                    "log_path": str(async_meta.get("log_path", "")),
+                }
+            )
+            st.session_state["job_history"] = history_entries[-100:]
+            async_meta["history_recorded"] = True
+            st.session_state["async_meta"] = async_meta
+            queue_entries = list(st.session_state.get("async_queue") or [])
+            if queue_entries:
+                next_job = queue_entries.pop(0)
+                st.session_state["async_queue"] = queue_entries
+                proc_next, meta_next = _launch_background_process(
+                    cmd=list(next_job["cmd"]),
+                    workspace_path=Path(str(next_job["workspace"])),
+                    log_path=Path(str(next_job["log_path"])),
+                    cfg_path=Path(str(next_job["cfg_path"])),
+                    output_hint=str(next_job["output_hint"]),
+                    stamp=str(next_job["stamp"]),
+                    job_id=str(next_job["job_id"]),
+                )
+                st.session_state["async_proc"] = proc_next
+                st.session_state["async_meta"] = meta_next
+                async_proc = proc_next
+                async_meta = meta_next
+                st.info(f"Avviato job in coda: `{meta_next['job_id']}`")
+
+    queue_entries = list(st.session_state.get("async_queue") or [])
+    history_entries = list(st.session_state.get("job_history") or [])
+    with st.expander("Queue job (background)", expanded=bool(queue_entries or history_entries)):
+        st.caption(
+            f"Queued: {len(queue_entries)} | Running: "
+            f"{1 if (async_proc is not None and async_proc.poll() is None) else 0} | "
+            f"History: {len(history_entries)}"
+        )
+        q_col_1, q_col_2 = st.columns(2)
+        with q_col_1:
+            if queue_entries:
+                st.write("In coda:")
+                st.table(
+                    [
+                        {
+                            "job_id": str(item.get("job_id", "")),
+                            "queued_at": str(item.get("stamp", "")),
+                            "output": str(item.get("output_hint", "")),
+                        }
+                        for item in queue_entries[:10]
+                    ]
+                )
+            else:
+                st.caption("Nessun job in coda.")
+        with q_col_2:
+            if history_entries:
+                st.write("Storico recente:")
+                st.table(
+                    [
+                        {
+                            "job_id": str(item.get("job_id", "")),
+                            "status": str(item.get("status", "")),
+                            "exit": str(item.get("exit", "")),
+                            "output": str(item.get("output_hint", "")),
+                        }
+                        for item in history_entries[-10:]
+                    ]
+                )
+            else:
+                st.caption("Storico vuoto.")
+        q_btn_1, q_btn_2 = st.columns(2)
+        with q_btn_1:
+            if st.button("Svuota coda", key="queue_clear_pending"):
+                st.session_state["async_queue"] = []
+                st.rerun()
+        with q_btn_2:
+            if st.button("Pulisci storico", key="queue_clear_history"):
+                st.session_state["job_history"] = []
+                st.rerun()
+
     if async_proc is not None and isinstance(async_meta, dict) and async_meta:
         log_path = Path(str(async_meta.get("log_path", "")))
         workspace_async = Path(str(async_meta.get("workspace", str(Path.cwd()))))
@@ -1291,6 +1995,12 @@ def main() -> None:
             tail_txt = _tail_text_file(log_path)
             if tail_txt:
                 st.code(tail_txt, language="bash")
+                eta_hint = _estimate_eta_from_log(tail_txt)
+                if eta_hint:
+                    st.caption(eta_hint)
+                live_frame = _extract_latest_frame_path_from_log(tail_txt, workspace_async)
+                if live_frame is not None and live_frame.exists():
+                    st.image(str(live_frame), caption=f"Live frame preview: {live_frame.name}")
 
             c_job_1, c_job_2 = st.columns(2)
             with c_job_1:
@@ -1324,19 +2034,22 @@ def main() -> None:
     default_cfg = asdict(RenderConfig())
     supports_adaptive_spatial = "adaptive_spatial_sampling" in default_cfg
     loaded_cfg: dict[str, Any] = {}
+    save_preset_requested = False
+    preset_save_name = ""
+    preset_save_tags_raw = ""
+    preset_save_lock_fields = True
 
     with st.sidebar:
         st.header(tr(lang, "run_header", "Run"))
         st.caption(f"{tr(lang, 'author_label', 'Autore')}: {AUTHOR_SIGNATURE}")
-        lang_options = list(LANGUAGE_OPTIONS.keys())
-        lang_idx = lang_options.index(lang) if lang in lang_options else 0
-        lang = st.selectbox(
+        lang_options = [code for code, _ in sorted(LANGUAGE_OPTIONS.items(), key=lambda kv: kv[1].casefold())]
+        st.selectbox(
             tr(lang, "language_label", "Lingua / Language"),
             options=lang_options,
-            index=lang_idx,
+            key="ui_lang",
             format_func=lambda code: LANGUAGE_OPTIONS.get(code, code),
         )
-        st.session_state["ui_lang"] = lang
+        lang = str(st.session_state.get("ui_lang", "it"))
         python_exec = st.text_input(tfield(lang, "Python executable"), value=_default_python())
         workspace = st.text_input(tr(lang, "workspace_label", "Workspace"), value=str(Path.cwd()))
         require_gpu = st.checkbox(tr(lang, "require_gpu", "Richiedi GPU (--require-gpu)"), value=True)
@@ -1351,12 +2064,95 @@ def main() -> None:
                 st.error(f"{tr(lang, 'json_invalid', 'JSON non valido')}: {exc}")
                 loaded_cfg = {}
 
+        workspace_sidebar = Path(workspace).expanduser().resolve()
+        preset_files = _list_presets(workspace_sidebar)
+        preset_options = [""] + [p.stem for p in preset_files]
+        with st.expander("Preset manager", expanded=False):
+            if st.session_state.get("preset_loaded_name"):
+                st.caption(
+                    f"Preset attivo: `{st.session_state.get('preset_loaded_name')}` | "
+                    f"lock={bool(st.session_state.get('preset_lock_active', False))}"
+                )
+            preset_to_load = st.selectbox(
+                "Load preset",
+                options=preset_options,
+                format_func=lambda name: "(none)" if not name else name,
+                key="preset_to_load_select",
+            )
+            lock_on_load = st.checkbox(
+                "Lock critical fields on load",
+                value=bool(st.session_state.get("preset_lock_active", False)),
+                key="preset_lock_on_load",
+            )
+            if st.button("Load selected preset", disabled=(not preset_to_load), key="preset_load_btn"):
+                try:
+                    preset_path = next(p for p in preset_files if p.stem == preset_to_load)
+                    cfg_payload, meta_payload = _load_preset(preset_path)
+                    st.session_state["preset_loaded_cfg"] = cfg_payload
+                    st.session_state["preset_loaded_name"] = preset_to_load
+                    if lock_on_load:
+                        locked_fields = list(meta_payload.get("critical_fields") or PRESET_CRITICAL_FIELDS)
+                        st.session_state["preset_lock_active"] = True
+                        st.session_state["preset_locked_fields"] = locked_fields
+                        st.session_state["preset_locked_values"] = {
+                            k: cfg_payload.get(k)
+                            for k in locked_fields
+                            if k in cfg_payload
+                        }
+                    else:
+                        st.session_state["preset_lock_active"] = False
+                        st.session_state["preset_locked_fields"] = []
+                        st.session_state["preset_locked_values"] = {}
+                    st.success(f"Preset caricato: {preset_to_load}")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Errore load preset: {exc}")
+            if st.button("Unlock preset critical fields", key="preset_unlock_btn"):
+                st.session_state["preset_lock_active"] = False
+                st.session_state["preset_locked_fields"] = []
+                st.session_state["preset_locked_values"] = {}
+                st.rerun()
+            st.divider()
+            preset_save_name = st.text_input("Preset name", value="")
+            preset_save_tags_raw = st.text_input("Preset tags (comma separated)", value="")
+            preset_save_lock_fields = st.checkbox("Store critical lock fields", value=True)
+            save_preset_requested = st.button("Save preset", key="preset_save_btn")
+
+    preset_cfg = st.session_state.get("preset_loaded_cfg") or {}
+    if isinstance(preset_cfg, dict) and preset_cfg:
+        # Uploaded JSON overrides loaded preset values when keys overlap.
+        loaded_cfg = {**preset_cfg, **loaded_cfg}
+
     cfg_seed = dict(default_cfg)
     cfg_seed.update(loaded_cfg)
     cfg_seed.setdefault("adaptive_spatial_sampling", bool(default_cfg.get("adaptive_spatial_sampling", False)))
     cfg_seed.setdefault("adaptive_spatial_preview_steps", int(default_cfg.get("adaptive_spatial_preview_steps", 96)))
     cfg_seed.setdefault("adaptive_spatial_min_scale", float(default_cfg.get("adaptive_spatial_min_scale", 0.65)))
     cfg_seed.setdefault("adaptive_spatial_quantile", float(default_cfg.get("adaptive_spatial_quantile", 0.78)))
+    cfg_seed.setdefault("disk_layer_accident_strength", float(default_cfg.get("disk_layer_accident_strength", 0.42)))
+    cfg_seed.setdefault("disk_layer_accident_count", float(default_cfg.get("disk_layer_accident_count", 3.8)))
+    cfg_seed.setdefault("disk_layer_accident_sharpness", float(default_cfg.get("disk_layer_accident_sharpness", 7.0)))
+    cfg_seed.setdefault("disk_layer_global_phase", float(default_cfg.get("disk_layer_global_phase", 0.0)))
+    cfg_seed.setdefault("disk_layer_phase_rate_hz", float(default_cfg.get("disk_layer_phase_rate_hz", 0.35)))
+    cfg_seed.setdefault("roi_supersampling", bool(default_cfg.get("roi_supersampling", False)))
+    cfg_seed.setdefault("roi_supersample_threshold", float(default_cfg.get("roi_supersample_threshold", 0.92)))
+    cfg_seed.setdefault("roi_supersample_jitter", float(default_cfg.get("roi_supersample_jitter", 0.35)))
+    cfg_seed.setdefault("roi_supersample_samples", int(default_cfg.get("roi_supersample_samples", 2)))
+    cfg_seed.setdefault("persistent_cache_enabled", bool(default_cfg.get("persistent_cache_enabled", True)))
+    cfg_seed.setdefault("persistent_cache_dir", str(default_cfg.get("persistent_cache_dir", "out/cache")))
+    cfg_seed.setdefault("quality_lock", bool(default_cfg.get("quality_lock", False)))
+    cfg_seed.setdefault("quality_lock_psnr_min", float(default_cfg.get("quality_lock_psnr_min", 45.0)))
+    cfg_seed.setdefault("quality_lock_ssim_min", float(default_cfg.get("quality_lock_ssim_min", 0.985)))
+    cfg_seed.setdefault("quality_lock_sample_width", int(default_cfg.get("quality_lock_sample_width", 256)))
+    cfg_seed.setdefault("quality_lock_sample_height", int(default_cfg.get("quality_lock_sample_height", 144)))
+    cfg_seed.setdefault(
+        "quality_lock_fallback_to_baseline",
+        bool(default_cfg.get("quality_lock_fallback_to_baseline", True)),
+    )
+    cfg_seed.setdefault("animation_workers", int(default_cfg.get("animation_workers", 1)))
+    cfg_seed.setdefault("stream_encode_async", bool(default_cfg.get("stream_encode_async", True)))
+    cfg_seed.setdefault("stream_encode_queue_size", int(default_cfg.get("stream_encode_queue_size", 4)))
+    cfg_seed.setdefault("mps_auto_chunking", bool(default_cfg.get("mps_auto_chunking", True)))
 
     workspace_path_preview = Path(workspace).expanduser().resolve()
     with st.expander(tr(lang, "manual_open", "Apri file manuale"), expanded=False):
@@ -1458,8 +2254,21 @@ def main() -> None:
             output_default = "out/webui_starship.png"
         else:
             output_default = "out/webui_frame.png"
-        output_seed = loaded_cfg.get("output", output_default)
-        output_path = st.text_input(tfield(lang, "Output file"), value=str(output_seed))
+        output_seed_raw = str(loaded_cfg.get("output", output_default))
+        output_seed_path = Path(output_seed_raw)
+        use_output_parts = st.checkbox(
+            tfield(lang, "Compose output path from folder + filename"),
+            value=False,
+        )
+        if use_output_parts:
+            output_dir_default = str(output_seed_path.parent) if str(output_seed_path.parent).strip() else "out"
+            output_name_default = output_seed_path.name.strip() or Path(output_default).name
+            output_dir = st.text_input(tfield(lang, "Output directory"), value=output_dir_default)
+            output_name = st.text_input(tfield(lang, "Output file name"), value=output_name_default)
+            output_path = str(Path(output_dir).expanduser() / output_name)
+            st.caption(f"{tfield(lang, 'Output file')}: `{output_path}`")
+        else:
+            output_path = st.text_input(tfield(lang, "Output file"), value=output_seed_raw)
         fov_deg = st.number_input(tfield(lang, "FOV (deg)"), value=float(cfg_seed["fov_deg"]), step=0.1, format="%.3f")
         coordinate_system = st.selectbox(
             tfield(lang, "Coordinate system"),
@@ -1570,10 +2379,159 @@ def main() -> None:
                 step=0.1,
             )
         disk_emission_gain = st.number_input(tfield(lang, "Disk emission gain"), value=float(cfg_seed["disk_emission_gain"]), step=0.5)
+        disk_palette = st.selectbox(
+            tfield(lang, "Disk palette"),
+            options=CHOICE_FIELDS["disk_palette"],
+            index=CHOICE_FIELDS["disk_palette"].index(
+                _safe_choice(CHOICE_FIELDS["disk_palette"], str(cfg_seed.get("disk_palette", "default")))
+            ),
+        )
+        disk_layered_palette = st.checkbox(
+            tfield(lang, "Enable layered disk"),
+            value=bool(cfg_seed.get("disk_layered_palette", False)),
+        )
+        disk_layer_count = st.number_input(
+            tfield(lang, "Layer count"),
+            min_value=2,
+            max_value=512,
+            value=int(cfg_seed.get("disk_layer_count", 12)),
+            step=1,
+            disabled=(not disk_layered_palette),
+        )
+        disk_layer_mix = st.slider(
+            tfield(lang, "Layer mix"),
+            min_value=0.0,
+            max_value=1.0,
+            value=float(cfg_seed.get("disk_layer_mix", 0.55)),
+            step=0.01,
+            disabled=(not disk_layered_palette),
+        )
+        disk_layer_accident_strength = st.number_input(
+            tfield(lang, "Layer accident strength"),
+            min_value=0.0,
+            max_value=4.0,
+            value=float(cfg_seed.get("disk_layer_accident_strength", 0.42)),
+            step=0.05,
+            disabled=(not disk_layered_palette),
+        )
+        disk_layer_accident_count = st.number_input(
+            tfield(lang, "Layer accident count"),
+            min_value=0.0,
+            max_value=128.0,
+            value=float(cfg_seed.get("disk_layer_accident_count", 3.8)),
+            step=0.1,
+            disabled=(not disk_layered_palette),
+        )
+        disk_layer_accident_sharpness = st.number_input(
+            tfield(lang, "Layer accident sharpness"),
+            min_value=1.0,
+            max_value=32.0,
+            value=float(cfg_seed.get("disk_layer_accident_sharpness", 7.0)),
+            step=0.5,
+            disabled=(not disk_layered_palette),
+        )
+        disk_layer_global_phase = st.number_input(
+            tfield(lang, "Layer global phase"),
+            value=float(cfg_seed.get("disk_layer_global_phase", 0.0)),
+            step=0.1,
+            disabled=(not disk_layered_palette),
+        )
+        disk_layer_phase_rate_hz = st.number_input(
+            tfield(lang, "Layer phase rate (Hz)"),
+            min_value=0.0,
+            max_value=64.0,
+            value=float(cfg_seed.get("disk_layer_phase_rate_hz", 0.35)),
+            step=0.05,
+            disabled=(not disk_layered_palette),
+        )
+        disk_adaptive_stratification = st.checkbox(
+            tfield(lang, "Adaptive disk stratification"),
+            value=bool(cfg_seed.get("disk_adaptive_stratification", False)),
+            disabled=(not disk_layered_palette),
+        )
+        disk_adaptive_layers_min = st.number_input(
+            tfield(lang, "Adaptive layers min"),
+            min_value=2,
+            max_value=1024,
+            value=int(cfg_seed.get("disk_adaptive_layers_min", 8)),
+            step=1,
+            disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
+        )
+        disk_adaptive_layers_max = st.number_input(
+            tfield(lang, "Adaptive layers max"),
+            min_value=2,
+            max_value=2048,
+            value=int(cfg_seed.get("disk_adaptive_layers_max", 48)),
+            step=1,
+            disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
+        )
+        disk_adaptive_complexity_mix = st.slider(
+            tfield(lang, "Adaptive complexity mix"),
+            min_value=0.0,
+            max_value=1.0,
+            value=float(cfg_seed.get("disk_adaptive_complexity_mix", 0.65)),
+            step=0.01,
+            disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
+        )
+        disk_volume_emission = st.checkbox(
+            tfield(lang, "Continuous disk volume emission"),
+            value=bool(cfg_seed.get("disk_volume_emission", False)),
+        )
+        disk_volume_samples = st.number_input(
+            tfield(lang, "Disk volume samples"),
+            min_value=1,
+            max_value=64,
+            value=int(cfg_seed.get("disk_volume_samples", 5)),
+            step=1,
+            disabled=(not disk_volume_emission),
+        )
+        disk_volume_density_scale = st.number_input(
+            tfield(lang, "Disk volume density scale"),
+            min_value=0.0,
+            max_value=1000.0,
+            value=float(cfg_seed.get("disk_volume_density_scale", 1.0)),
+            step=0.05,
+            disabled=(not disk_volume_emission),
+        )
+        disk_volume_temperature_drop = st.slider(
+            tfield(lang, "Disk volume temperature drop"),
+            min_value=0.0,
+            max_value=1.0,
+            value=float(cfg_seed.get("disk_volume_temperature_drop", 0.28)),
+            step=0.01,
+            disabled=(not disk_volume_emission),
+        )
+        disk_volume_strength = st.number_input(
+            tfield(lang, "Disk volume strength"),
+            min_value=0.0,
+            max_value=10.0,
+            value=float(cfg_seed.get("disk_volume_strength", 0.85)),
+            step=0.05,
+            disabled=(not disk_volume_emission),
+        )
     with d2:
         max_steps = st.number_input(tfield(lang, "Max steps"), min_value=16, value=int(cfg_seed["max_steps"]), step=10)
         step_size = st.number_input(tfield(lang, "Step size"), min_value=0.001, value=float(cfg_seed["step_size"]), step=0.01)
         adaptive_integrator = st.checkbox(tfield(lang, "Adaptive integrator"), value=bool(cfg_seed["adaptive_integrator"]))
+        temporal_reprojection = st.checkbox(
+            tfield(lang, "Temporal reprojection"),
+            value=bool(cfg_seed.get("temporal_reprojection", False)),
+        )
+        temporal_blend = st.slider(
+            tfield(lang, "Temporal blend"),
+            min_value=0.0,
+            max_value=1.0,
+            value=float(cfg_seed.get("temporal_blend", 0.18)),
+            step=0.01,
+            disabled=(not temporal_reprojection),
+        )
+        temporal_clamp = st.number_input(
+            tfield(lang, "Temporal clamp"),
+            min_value=0.1,
+            value=float(cfg_seed.get("temporal_clamp", 24.0)),
+            step=0.5,
+            disabled=(not temporal_reprojection),
+        )
     with d3:
         device = st.selectbox(
             tfield(lang, "Device"),
@@ -1596,9 +2554,110 @@ def main() -> None:
         )
     with d4:
         mps_optimized_kernel = st.checkbox(tfield(lang, "MPS optimized kernel"), value=bool(cfg_seed["mps_optimized_kernel"]))
+        mps_auto_chunking = st.checkbox(tfield(lang, "MPS auto chunking"), value=bool(cfg_seed.get("mps_auto_chunking", True)))
         compile_rhs = st.checkbox(tfield(lang, "Compile RHS"), value=bool(cfg_seed["compile_rhs"]))
         mixed_precision = st.checkbox(tfield(lang, "Mixed precision"), value=bool(cfg_seed["mixed_precision"]))
         camera_fastpath = st.checkbox(tfield(lang, "Camera fastpath"), value=bool(cfg_seed["camera_fastpath"]))
+        roi_supersampling = st.checkbox(
+            tfield(lang, "ROI supersampling"),
+            value=bool(cfg_seed.get("roi_supersampling", False)),
+        )
+        roi_supersample_threshold = st.number_input(
+            tfield(lang, "ROI threshold"),
+            min_value=0.50,
+            max_value=0.999,
+            value=float(cfg_seed.get("roi_supersample_threshold", 0.92)),
+            step=0.01,
+            format="%.3f",
+            disabled=(not roi_supersampling),
+        )
+        roi_supersample_jitter = st.number_input(
+            tfield(lang, "ROI jitter"),
+            min_value=0.01,
+            max_value=1.00,
+            value=float(cfg_seed.get("roi_supersample_jitter", 0.35)),
+            step=0.01,
+            format="%.2f",
+            disabled=(not roi_supersampling),
+        )
+        roi_supersample_samples = st.number_input(
+            tfield(lang, "ROI samples"),
+            min_value=1,
+            max_value=8,
+            value=int(cfg_seed.get("roi_supersample_samples", 2)),
+            step=1,
+            disabled=(not roi_supersampling),
+        )
+        persistent_cache_enabled = st.checkbox(
+            tfield(lang, "Persistent cache"),
+            value=bool(cfg_seed.get("persistent_cache_enabled", True)),
+        )
+        persistent_cache_dir = st.text_input(
+            tfield(lang, "Persistent cache dir"),
+            value=str(cfg_seed.get("persistent_cache_dir", "out/cache")),
+            disabled=(not persistent_cache_enabled),
+        )
+        quality_lock = st.checkbox(
+            tfield(lang, "Quality lock"),
+            value=bool(cfg_seed.get("quality_lock", False)),
+        )
+        quality_lock_psnr_min = st.number_input(
+            tfield(lang, "Quality lock PSNR min"),
+            min_value=1.0,
+            max_value=120.0,
+            value=float(cfg_seed.get("quality_lock_psnr_min", 45.0)),
+            step=0.5,
+            disabled=(not quality_lock),
+        )
+        quality_lock_ssim_min = st.number_input(
+            tfield(lang, "Quality lock SSIM min"),
+            min_value=0.10,
+            max_value=1.0,
+            value=float(cfg_seed.get("quality_lock_ssim_min", 0.985)),
+            step=0.001,
+            format="%.3f",
+            disabled=(not quality_lock),
+        )
+        quality_lock_sample_width = st.number_input(
+            tfield(lang, "Quality lock sample width"),
+            min_value=64,
+            max_value=int(width),
+            value=min(int(width), int(cfg_seed.get("quality_lock_sample_width", 256))),
+            step=8,
+            disabled=(not quality_lock),
+        )
+        quality_lock_sample_height = st.number_input(
+            tfield(lang, "Quality lock sample height"),
+            min_value=64,
+            max_value=int(height),
+            value=min(int(height), int(cfg_seed.get("quality_lock_sample_height", 144))),
+            step=8,
+            disabled=(not quality_lock),
+        )
+        quality_lock_fallback_to_baseline = st.checkbox(
+            tfield(lang, "Quality lock fallback"),
+            value=bool(cfg_seed.get("quality_lock_fallback_to_baseline", True)),
+            disabled=(not quality_lock),
+        )
+        animation_workers = st.number_input(
+            tfield(lang, "Animation workers"),
+            min_value=1,
+            max_value=32,
+            value=int(cfg_seed.get("animation_workers", 1)),
+            step=1,
+        )
+        stream_encode_async = st.checkbox(
+            tfield(lang, "Stream encode async"),
+            value=bool(cfg_seed.get("stream_encode_async", True)),
+        )
+        stream_encode_queue_size = st.number_input(
+            tfield(lang, "Stream encode queue"),
+            min_value=1,
+            max_value=64,
+            value=int(cfg_seed.get("stream_encode_queue_size", 4)),
+            step=1,
+            disabled=(not stream_encode_async),
+        )
         adaptive_spatial_sampling = bool(cfg_seed.get("adaptive_spatial_sampling", False))
         adaptive_spatial_preview_steps = int(cfg_seed.get("adaptive_spatial_preview_steps", 96))
         adaptive_spatial_min_scale = float(cfg_seed.get("adaptive_spatial_min_scale", 0.65))
@@ -1651,11 +2710,49 @@ def main() -> None:
             value=float(cfg_seed["gargantua_look_strength"]),
             step=0.05,
         )
+        temporal_denoise_mode = st.selectbox(
+            tfield(lang, "Temporal denoise mode"),
+            options=CHOICE_FIELDS["temporal_denoise_mode"],
+            index=CHOICE_FIELDS["temporal_denoise_mode"].index(
+                _safe_choice(CHOICE_FIELDS["temporal_denoise_mode"], str(cfg_seed.get("temporal_denoise_mode", "basic")))
+            ),
+            disabled=(not temporal_reprojection),
+        )
+        temporal_denoise_radius = st.number_input(
+            tfield(lang, "Temporal denoise radius"),
+            min_value=1,
+            max_value=4,
+            value=int(cfg_seed.get("temporal_denoise_radius", 1)),
+            step=1,
+            disabled=(not temporal_reprojection),
+        )
+        temporal_denoise_sigma = st.number_input(
+            tfield(lang, "Temporal denoise sigma"),
+            min_value=0.1,
+            value=float(cfg_seed.get("temporal_denoise_sigma", 18.0)),
+            step=0.5,
+            disabled=(not temporal_reprojection),
+        )
+        temporal_denoise_clip = st.number_input(
+            tfield(lang, "Temporal denoise clip"),
+            min_value=0.1,
+            value=float(cfg_seed.get("temporal_denoise_clip", 9.0)),
+            step=0.5,
+            disabled=(not temporal_reprojection),
+        )
+        motion_vector_scale = st.number_input(
+            tfield(lang, "Motion vector scale"),
+            min_value=0.0,
+            value=float(cfg_seed.get("motion_vector_scale", 1.0)),
+            step=0.05,
+            disabled=(not temporal_reprojection),
+        )
 
     if perf_profile == "gpu_balanced":
         compile_rhs = True
         mixed_precision = True
         camera_fastpath = True
+        mps_auto_chunking = True
         if supports_adaptive_spatial:
             adaptive_spatial_sampling = True
         if device in {"mps", "auto"}:
@@ -1666,6 +2763,7 @@ def main() -> None:
         compile_rhs = True
         mixed_precision = True
         camera_fastpath = True
+        mps_auto_chunking = True
         if supports_adaptive_spatial:
             adaptive_spatial_sampling = True
         if device in {"mps", "auto"}:
@@ -1673,6 +2771,7 @@ def main() -> None:
         adaptive_integrator = False
         max_steps = min(int(max_steps), 360)
         step_size = max(float(step_size), 0.24)
+        quality_lock = False
         if supports_adaptive_spatial:
             adaptive_spatial_min_scale = min(float(adaptive_spatial_min_scale), 0.58)
             adaptive_spatial_preview_steps = min(int(adaptive_spatial_preview_steps), 96)
@@ -1760,6 +2859,9 @@ def main() -> None:
             video_params["spatial_jitter"] = st.checkbox(tfield(lang, "Spatial jitter"), value=False)
             video_params["stream_encode"] = st.checkbox(tfield(lang, "Stream encode"), value=True)
             video_params["adaptive_frame_steps"] = st.checkbox(tfield(lang, "Adaptive frame steps"), value=True)
+            video_params["live_frame_preview"] = st.checkbox("Live frame preview", value=True)
+            video_params["keep_frames"] = st.checkbox("Keep frames (resume/preview)", value=True)
+            video_params["resume_frames"] = st.checkbox("Resume from existing frames", value=False)
             video_params["adaptive_frame_steps_min_scale"] = st.number_input(
                 tfield(lang, "Adaptive min scale"),
                 min_value=0.1,
@@ -1767,6 +2869,11 @@ def main() -> None:
                 value=0.60,
                 step=0.05,
             )
+        default_frames_dir = str(
+            loaded_cfg.get("frames_dir")
+            or (workspace_path_preview / "out" / "webui_runs" / f"frames_{Path(str(output_path)).stem}")
+        )
+        video_params["frames_dir"] = st.text_input("Frames directory", value=default_frames_dir)
 
     starship_params: dict[str, Any] = {}
     starship_video_params: dict[str, Any] = {}
@@ -1938,9 +3045,19 @@ def main() -> None:
                     value=bool(loaded_cfg.get("keep_starship_frames", False)),
                 )
 
-    with st.expander(tfield(lang, "Advanced JSON override (optional)")):
-        st.write(tfield(lang, "Enter only fields to override, for example: `{\"disk_beaming_strength\": 0.6}`"))
-        patch_text = st.text_area(tfield(lang, "JSON patch"), value="{}", height=220)
+    patch_caption = tfield(lang, "Advanced JSON override (optional)")
+    patch_help = tfield(lang, "Enter only fields to override, for example: `{\"disk_beaming_strength\": 0.6}`")
+    patch_default = "{}"
+    if hasattr(st, "popover"):
+        # Compact icon-based access to keep the main layout clean.
+        with st.popover("🧩 JSON", use_container_width=False):
+            st.caption(patch_caption)
+            st.write(patch_help)
+            patch_text = st.text_area(tfield(lang, "JSON patch"), value=patch_default, height=220)
+    else:
+        with st.expander(f"🧩 {patch_caption}", expanded=False):
+            st.write(patch_help)
+            patch_text = st.text_area(tfield(lang, "JSON patch"), value=patch_default, height=220)
 
     config_dict = dict(default_cfg)
     config_dict.update(
@@ -1962,17 +3079,59 @@ def main() -> None:
             "disk_outer_radius": float(disk_outer_radius),
             "disk_inner_radius": disk_inner_radius,
             "disk_emission_gain": float(disk_emission_gain),
+            "disk_palette": disk_palette,
+            "disk_layered_palette": bool(disk_layered_palette),
+            "disk_layer_count": int(disk_layer_count),
+            "disk_layer_mix": float(disk_layer_mix),
+            "disk_layer_accident_strength": float(disk_layer_accident_strength),
+            "disk_layer_accident_count": float(disk_layer_accident_count),
+            "disk_layer_accident_sharpness": float(disk_layer_accident_sharpness),
+            "disk_layer_global_phase": float(disk_layer_global_phase),
+            "disk_layer_phase_rate_hz": float(disk_layer_phase_rate_hz),
+            "disk_adaptive_stratification": bool(disk_adaptive_stratification),
+            "disk_adaptive_layers_min": int(disk_adaptive_layers_min),
+            "disk_adaptive_layers_max": int(disk_adaptive_layers_max),
+            "disk_adaptive_complexity_mix": float(disk_adaptive_complexity_mix),
+            "disk_volume_emission": bool(disk_volume_emission),
+            "disk_volume_samples": int(disk_volume_samples),
+            "disk_volume_density_scale": float(disk_volume_density_scale),
+            "disk_volume_temperature_drop": float(disk_volume_temperature_drop),
+            "disk_volume_strength": float(disk_volume_strength),
             "max_steps": int(max_steps),
             "step_size": float(step_size),
             "adaptive_integrator": bool(adaptive_integrator),
+            "temporal_reprojection": bool(temporal_reprojection),
+            "temporal_denoise_mode": temporal_denoise_mode,
+            "temporal_blend": float(temporal_blend),
+            "temporal_clamp": float(temporal_clamp),
+            "motion_vector_scale": float(motion_vector_scale),
+            "temporal_denoise_radius": int(temporal_denoise_radius),
+            "temporal_denoise_sigma": float(temporal_denoise_sigma),
+            "temporal_denoise_clip": float(temporal_denoise_clip),
             "device": device,
             "dtype": dtype,
             "show_progress_bar": bool(show_progress_bar),
             "progress_backend": progress_backend,
             "mps_optimized_kernel": bool(mps_optimized_kernel),
+            "mps_auto_chunking": bool(mps_auto_chunking),
             "compile_rhs": bool(compile_rhs),
             "mixed_precision": bool(mixed_precision),
             "camera_fastpath": bool(camera_fastpath),
+            "roi_supersampling": bool(roi_supersampling),
+            "roi_supersample_threshold": float(roi_supersample_threshold),
+            "roi_supersample_jitter": float(roi_supersample_jitter),
+            "roi_supersample_samples": int(roi_supersample_samples),
+            "persistent_cache_enabled": bool(persistent_cache_enabled),
+            "persistent_cache_dir": str(persistent_cache_dir).strip() or "out/cache",
+            "quality_lock": bool(quality_lock),
+            "quality_lock_psnr_min": float(quality_lock_psnr_min),
+            "quality_lock_ssim_min": float(quality_lock_ssim_min),
+            "quality_lock_sample_width": int(quality_lock_sample_width),
+            "quality_lock_sample_height": int(quality_lock_sample_height),
+            "quality_lock_fallback_to_baseline": bool(quality_lock_fallback_to_baseline),
+            "animation_workers": int(animation_workers),
+            "stream_encode_async": bool(stream_encode_async),
+            "stream_encode_queue_size": int(stream_encode_queue_size),
             "render_tile_rows": int(render_tile_rows),
             "postprocess_pipeline": postprocess_pipeline,
             "gargantua_look_strength": float(gargantua_look_strength),
@@ -1997,27 +3156,225 @@ def main() -> None:
             }
         )
 
-    run_col, preview_col = st.columns([1, 2])
+    run_col, preview_col = st.columns([1, 1])
     with run_col:
         run_now_live = st.button(tr(lang, "run_live", "Lancia simulazione (live)"), type="primary")
         run_now_bg = st.button(tr(lang, "run_bg", "Lancia in background"))
+        run_ab_compare = st.button("Run A/B compare (quick frame)")
+        preflight_enabled = st.checkbox("Preflight fisico automatico", value=True)
+        dryrun_enabled = st.checkbox(
+            "Dry-run 256p gate prima del video",
+            value=True,
+            disabled=(mode != "video"),
+        )
+        autotune_enabled = st.checkbox(
+            "Autotune device/tiling (quick benchmark)",
+            value=False,
+            disabled=(mode in {"starship_frame", "starship_video"}),
+        )
+        with st.expander("A/B compare settings", expanded=False):
+            ab_compare_width = st.number_input("A/B width", min_value=128, max_value=1920, value=512, step=32)
+            ab_compare_max_steps = st.number_input("A/B max_steps", min_value=64, max_value=4000, value=320, step=16)
+            ab_patch_a_text = st.text_area("A patch JSON", value="{}", height=100)
+            ab_patch_b_text = st.text_area("B patch JSON", value='{"disk_emission_gain": 3.0}', height=100)
     with preview_col:
-        st.code(json.dumps(config_dict, indent=2), language="json")
+        preview_json = json.dumps(config_dict, indent=2)
+        if hasattr(st, "popover"):
+            with st.popover("🧾 Config JSON", use_container_width=False):
+                st.code(preview_json, language="json")
+        else:
+            with st.expander("🧾 Config JSON", expanded=False):
+                st.code(preview_json, language="json")
 
-    if not run_now_live and not run_now_bg:
+    if save_preset_requested:
+        save_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(preset_save_name or "").strip()).strip("._-")
+        if not save_name:
+            st.error("Preset name vuoto o non valido.")
+        else:
+            workspace_path_for_preset = Path(workspace).expanduser().resolve()
+            preset_path = _preset_dir(workspace_path_for_preset) / f"{save_name}.json"
+            tags = [x.strip() for x in str(preset_save_tags_raw or "").split(",") if x.strip()]
+            critical_fields = list(PRESET_CRITICAL_FIELDS if preset_save_lock_fields else [])
+            try:
+                _save_preset(
+                    path=preset_path,
+                    config_payload=dict(config_dict),
+                    tags=tags,
+                    critical_fields=critical_fields,
+                )
+                st.success(f"Preset salvato: {preset_path}")
+            except Exception as exc:
+                st.error(f"Errore salvataggio preset: {exc}")
+
+    if not run_now_live and not run_now_bg and (not run_ab_compare):
         return
 
     try:
         patch = _parse_patch(patch_text)
         config_dict.update(patch)
+        if bool(st.session_state.get("preset_lock_active", False)):
+            locked_values = dict(st.session_state.get("preset_locked_values") or {})
+            for key, value in locked_values.items():
+                if key in config_dict:
+                    config_dict[key] = value
         cfg_obj = replace(RenderConfig(), **config_dict).validated()
     except Exception as exc:
         st.error(f"{tfield(lang, 'Invalid configuration')}: {exc}")
         return
 
+    if bool(st.session_state.get("preset_lock_active", False)):
+        locked_fields = list(st.session_state.get("preset_locked_fields") or [])
+        if locked_fields:
+            st.caption(
+                "Preset lock active on critical fields: "
+                + ", ".join(str(x) for x in locked_fields)
+            )
+
+    if preflight_enabled:
+        pre_errors, pre_warnings = _preflight_physical_checks(
+            cfg_obj=cfg_obj,
+            mode=mode,
+            video_params=video_params,
+        )
+        for wmsg in pre_warnings:
+            st.warning(f"Preflight: {wmsg}")
+        if pre_errors:
+            for emsg in pre_errors:
+                st.error(f"Preflight: {emsg}")
+            st.stop()
+
     workspace_path = Path(workspace).expanduser().resolve()
     run_dir = workspace_path / "out" / "webui_runs"
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    if run_ab_compare:
+        if mode in {"starship_frame", "starship_video"}:
+            st.error("A/B compare rapido supportato solo per single_frame/video (kerrtrace).")
+            st.stop()
+        with st.expander("A/B compare result", expanded=True):
+            try:
+                patch_a = _parse_patch(str(ab_patch_a_text))
+                patch_b = _parse_patch(str(ab_patch_b_text))
+            except Exception as exc:
+                st.error(f"A/B patch JSON non valido: {exc}")
+                st.stop()
+
+            stamp_ab = datetime.now().strftime("%Y%m%d_%H%M%S")
+            cases = [("A", patch_a), ("B", patch_b)]
+            results: list[dict[str, Any]] = []
+            lock_active = bool(st.session_state.get("preset_lock_active", False))
+            locked_values = dict(st.session_state.get("preset_locked_values") or {})
+
+            for label, patch_case in cases:
+                case_dict = dict(config_dict)
+                case_dict.update(patch_case)
+                if lock_active:
+                    for key, value in locked_values.items():
+                        if key in case_dict:
+                            case_dict[key] = value
+                try:
+                    case_cfg = replace(RenderConfig(), **case_dict).validated()
+                except Exception as exc:
+                    st.error(f"Configurazione A/B {label} non valida: {exc}")
+                    st.stop()
+                ab_w = int(ab_compare_width)
+                ab_h = max(96, int(round(float(case_cfg.height) * (float(ab_w) / max(1.0, float(case_cfg.width))))))
+                case_out = run_dir / f"ab_{label}_{stamp_ab}.png"
+                case_cfg = replace(
+                    case_cfg,
+                    width=ab_w,
+                    height=ab_h,
+                    max_steps=int(ab_compare_max_steps),
+                    show_progress_bar=False,
+                    output=str(case_out),
+                )
+                case_cfg_path = run_dir / f"ab_{label}_{stamp_ab}.json"
+                case_cfg_path.write_text(json.dumps(asdict(case_cfg), indent=2), encoding="utf-8")
+                ok, elapsed_s, log_tail = _benchmark_single_config(
+                    python_exec=str(python_exec),
+                    workspace_path=workspace_path,
+                    cfg_path=case_cfg_path,
+                    output_path=case_out,
+                    require_gpu=bool(require_gpu),
+                    timeout_s=600.0,
+                )
+                results.append(
+                    {
+                        "label": label,
+                        "ok": ok,
+                        "elapsed_s": elapsed_s,
+                        "output": case_out,
+                        "cfg_path": case_cfg_path,
+                        "log_tail": log_tail,
+                    }
+                )
+
+            st.table(
+                [
+                    {
+                        "case": row["label"],
+                        "ok": bool(row["ok"]),
+                        "elapsed_s": round(float(row["elapsed_s"]), 3),
+                        "output": str(row["output"]),
+                    }
+                    for row in results
+                ]
+            )
+
+            if len(results) == 2 and results[0]["ok"] and results[1]["ok"]:
+                t_a = float(results[0]["elapsed_s"])
+                t_b = float(results[1]["elapsed_s"])
+                if t_a > 1.0e-9 and t_b > 1.0e-9:
+                    faster = "A" if t_a < t_b else "B"
+                    speedup = (max(t_a, t_b) / min(t_a, t_b)) if min(t_a, t_b) > 0.0 else float("inf")
+                    st.info(
+                        f"Faster case: {faster} | speedup: {speedup:.3f}x "
+                        f"(A={t_a:.3f}s, B={t_b:.3f}s)"
+                    )
+
+            c_a, c_b = st.columns(2)
+            for col, row in zip([c_a, c_b], results):
+                with col:
+                    st.caption(f"Case {row['label']}")
+                    if bool(row["ok"]) and Path(str(row["output"])).exists():
+                        st.image(str(row["output"]), caption=str(row["output"]))
+                    else:
+                        st.error(f"Case {row['label']} failed")
+                        if row.get("log_tail"):
+                            st.code(str(row["log_tail"]), language="bash")
+            st.stop()
+
+    if autotune_enabled and mode in {"single_frame", "video"}:
+        with st.expander("Autotune benchmark", expanded=True):
+            st.caption("Benchmark rapido su frame ridotto per selezionare device e tiling più efficienti.")
+            tuned_cfg, tune_report = _autotune_quick_device_and_tiling(
+                python_exec=str(python_exec),
+                workspace_path=workspace_path,
+                run_dir=run_dir,
+                cfg_obj=cfg_obj,
+                require_gpu=bool(require_gpu),
+            )
+            if tune_report:
+                st.table(
+                    [
+                        {
+                            "stage": str(row.get("stage", "")),
+                            "candidate": str(row.get("candidate", "")),
+                            "ok": bool(row.get("ok", False)),
+                            "elapsed_s": round(float(row.get("elapsed_s", 0.0)), 3),
+                        }
+                        for row in tune_report
+                    ]
+                )
+            if tuned_cfg != cfg_obj:
+                st.success(
+                    f"Autotune applicato: device={tuned_cfg.device}, render_tile_rows={tuned_cfg.render_tile_rows}, "
+                    f"mps_optimized_kernel={tuned_cfg.mps_optimized_kernel}"
+                )
+                cfg_obj = tuned_cfg
+            else:
+                st.warning("Autotune non ha trovato un profilo migliore; mantengo la configurazione corrente.")
+
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg_path = run_dir / f"config_{stamp}.json"
     cfg_path.write_text(json.dumps(asdict(cfg_obj), indent=2), encoding="utf-8")
@@ -2193,47 +3550,148 @@ def main() -> None:
                 cmd.append("--disable-stream-encode")
             if not bool(video_params["adaptive_frame_steps"]):
                 cmd.append("--disable-adaptive-frame-steps")
+            frames_dir_raw = str(video_params.get("frames_dir") or "").strip()
+            use_live_preview = bool(video_params.get("live_frame_preview", False))
+            keep_frames = bool(video_params.get("keep_frames", False))
+            if use_live_preview:
+                keep_frames = True
+            if frames_dir_raw:
+                cmd += ["--frames-dir", frames_dir_raw]
+            if keep_frames:
+                cmd.append("--keep-frames")
+            if bool(video_params.get("resume_frames", False)):
+                cmd.append("--resume-frames")
+
+    if mode == "video" and dryrun_enabled:
+        dry_width = 256
+        dry_height = max(96, int(round(float(cfg_obj.height) * (float(dry_width) / max(1.0, float(cfg_obj.width))))))
+        dry_output = run_dir / f"dryrun_preview_{stamp}.png"
+        dry_cfg_path = run_dir / f"dryrun_config_{stamp}.json"
+        dry_max_steps = max(120, min(int(cfg_obj.max_steps), 320))
+        dry_cfg = replace(
+            cfg_obj,
+            width=int(dry_width),
+            height=int(dry_height),
+            max_steps=int(dry_max_steps),
+            output=str(dry_output),
+            render_tile_rows=0,
+        )
+        if video_params.get("observer_radius_start") is not None:
+            dry_cfg = replace(dry_cfg, observer_radius=float(video_params["observer_radius_start"]))
+        if video_params.get("inclination_start_deg") is not None:
+            dry_cfg = replace(dry_cfg, observer_inclination_deg=float(video_params["inclination_start_deg"]))
+        if video_params.get("inclination_end_deg") is not None:
+            # Evaluate also a middle point when sweep is enabled to reduce false positives.
+            i_start = float(video_params.get("inclination_start_deg") or dry_cfg.observer_inclination_deg)
+            i_end = float(video_params["inclination_end_deg"])
+            dry_cfg = replace(dry_cfg, observer_inclination_deg=0.5 * (i_start + i_end))
+
+        dry_cfg_path.write_text(json.dumps(asdict(dry_cfg), indent=2), encoding="utf-8")
+        dry_cmd = [
+            str(python_exec),
+            "-m",
+            "kerrtrace",
+            "--config",
+            str(dry_cfg_path),
+            "--output",
+            str(dry_output),
+        ]
+        if require_gpu:
+            dry_cmd.append("--require-gpu")
+
+        with st.expander("Dry-run gate 256p", expanded=True):
+            st.caption("Eseguo 1 frame rapido prima del video per evitare render lunghi non validi.")
+            st.code(" ".join(dry_cmd), language="bash")
+            dry_progress = st.progress(0.0, text="Dry-run: preparing")
+            dry_log_placeholder = st.empty()
+            dry_rc, dry_log = _run_command_live(
+                dry_cmd,
+                workspace_path,
+                dry_log_placeholder,
+                dry_progress,
+            )
+            dry_log_path = run_dir / f"dryrun_{stamp}.log"
+            dry_log_path.write_text(dry_log, encoding="utf-8")
+            if dry_rc != 0:
+                dry_progress.empty()
+                st.error(f"Dry-run fallito (exit={dry_rc}). Blocco del video. Log: {dry_log_path}")
+                st.stop()
+            dry_progress.progress(1.0, text="Dry-run: completed")
+            if dry_output.exists():
+                st.image(str(dry_output), caption=f"Dry-run preview: {dry_output}")
+            ok_dryrun, dry_reasons, dry_metrics = _analyze_dryrun_image(dry_output)
+            st.caption(
+                "Dry-run metrics: "
+                + ", ".join(
+                    f"{k}={v:.4f}" for k, v in sorted(dry_metrics.items())
+                )
+            )
+            if not ok_dryrun:
+                for reason in dry_reasons:
+                    st.error(f"Dry-run gate: {reason}")
+                st.error("Video bloccato dal gate di qualità. Correggi parametri e rilancia.")
+                st.stop()
+            st.success("Dry-run superato: avvio del rendering video.")
 
     st.info(tr(lang, "cmd_launched", "Comando lanciato:"))
     st.code(" ".join(cmd), language="bash")
     st.info(f"{tr(lang, 'cfg_used', 'Config JSON usata')}: {cfg_path}")
 
     if run_now_bg:
+        counter = int(st.session_state.get("job_counter", 0)) + 1
+        st.session_state["job_counter"] = counter
+        job_id = f"job_{counter:04d}"
+        log_path = run_dir / f"run_{stamp}_{job_id}.log"
+        queue_entry = {
+            "job_id": job_id,
+            "stamp": stamp,
+            "cmd": list(cmd),
+            "workspace": str(workspace_path),
+            "log_path": str(log_path),
+            "cfg_path": str(cfg_path),
+            "output_hint": str(cfg_obj.output),
+        }
+
         existing_proc = st.session_state.get("async_proc")
         if existing_proc is not None and existing_proc.poll() is None:
-            st.error("C'è già un job in background in esecuzione. Fermalo o attendi la fine.")
-            return
-        log_path = run_dir / f"run_{stamp}.log"
-        log_file = log_path.open("w", encoding="utf-8")
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(workspace_path),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
+            queued = list(st.session_state.get("async_queue") or [])
+            queued.append(queue_entry)
+            st.session_state["async_queue"] = queued
+            st.success(
+                f"Job accodato: `{job_id}` (posizione {len(queued)}). "
+                f"Apri il pannello queue per monitorare."
             )
-        finally:
-            log_file.close()
+            return
+
+        proc, meta = _launch_background_process(
+            cmd=list(cmd),
+            workspace_path=workspace_path,
+            log_path=log_path,
+            cfg_path=cfg_path,
+            output_hint=str(cfg_obj.output),
+            stamp=stamp,
+            job_id=job_id,
+        )
         st.session_state["async_proc"] = proc
-        st.session_state["async_meta"] = {
-            "started_at": stamp,
-            "cfg_path": str(cfg_path),
-            "log_path": str(log_path),
-            "workspace": str(workspace_path),
-            "output_hint": str(cfg_obj.output),
-            "cmd": " ".join(cmd),
-        }
+        st.session_state["async_meta"] = meta
         st.success(
-            f"Job avviato in background (PID {proc.pid}). "
+            f"Job avviato in background (PID {proc.pid}, id {job_id}). "
             f"Apri il pannello '{tr(lang, 'bg_job', 'Job in background')}' per monitorarlo."
         )
         return
 
     progress_widget = st.progress(0.0, text="Render rows: 0/0 (0.0%)")
     log_placeholder = st.empty()
-    rc, log_text = _run_command_live(cmd, workspace_path, log_placeholder, progress_widget)
+    frame_preview_placeholder = None
+    if mode == "video" and bool(video_params.get("live_frame_preview", False)):
+        frame_preview_placeholder = st.empty()
+    rc, log_text = _run_command_live(
+        cmd,
+        workspace_path,
+        log_placeholder,
+        progress_widget,
+        frame_preview_placeholder=frame_preview_placeholder,
+    )
     log_path = run_dir / f"run_{stamp}.log"
     log_path.write_text(log_text, encoding="utf-8")
 

@@ -117,6 +117,43 @@ streamlit run kerrtrace/webui.py
 
 Nota: la UI genera un file JSON di configurazione in `out/webui_runs/` e usa quello per il run.
 
+### Avvio come app locale (launcher)
+
+Puoi avviare la stessa WebUI come applicazione locale (apre il browser automaticamente):
+
+```bash
+kerrtrace-ui --workspace . --auto-port
+```
+
+Oppure senza installazione entrypoint:
+
+```bash
+python -m kerrtrace.desktop_launcher --workspace . --auto-port
+```
+
+### Build eseguibile desktop (PyInstaller)
+
+Per creare un eseguibile (macOS/Windows/Linux) che lancia l'interfaccia:
+
+```bash
+.venv/bin/pip install pyinstaller
+.venv/bin/python scripts/build_desktop_app.py --name KerrTraceUI --clean
+```
+
+Output previsto:
+- build onedir: `dist/KerrTraceUI/`
+- su macOS con `--windowed`: anche bundle `.app` nello stesso `dist/`.
+
+Opzioni utili:
+
+```bash
+# build onefile (piu' semplice da distribuire, spesso piu' lento all'avvio)
+.venv/bin/python scripts/build_desktop_app.py --name KerrTraceUI --onefile
+
+# tieni console visibile per debug
+.venv/bin/python scripts/build_desktop_app.py --name KerrTraceUI --console
+```
+
 ## Esecuzione rapida
 
 ```bash
@@ -151,6 +188,12 @@ Preset piu' cinematografico:
 
 ```bash
 python -m kerrtrace --config example_config.json --inner-edge-boost 2.8 --outer-edge-boost 0.5 --star-density 0.0025 --output out/interstellar_style.png
+```
+
+Preset rapido "Gargantua look" (ispirato a DNGR):
+
+```bash
+python -m kerrtrace --config example_config.json --enable-gargantua-look --output out/gargantua_look.png
 ```
 
 ## Animazioni e video
@@ -276,6 +319,8 @@ Setup rapido ambiente MPS (Python 3.11):
 - `disk_temperature_inner`: temperatura caratteristica del bordo interno (K).
 - `disk_color_correction`: hardening factor spettrale (tipico 1.5-1.9) per il modello `physical_nt`.
 - `disk_plasma_warmth`: mix [0..1] verso tinta plasma calda nel modello `physical_nt`.
+- `multi_hit_disk`, `max_disk_crossings`: abilita conteggio crossing multipli del disco (ordini di lensing superiori) e ne limita il numero massimo.
+- `lensing_order_strength`, `lensing_order_gamma`: guadagno e curvatura del boost per immagini di ordine superiore (anelli/foton ring).
 - `thick_disk`: abilita il modello di disco spesso (default `false`, disco sottile).
 - `disk_thickness_ratio`: semispessore relativo `H/r` (tipico 0.08-0.18).
 - `disk_thickness_power`: legge radiale dello spessore `H(r) ~ r^(1+power)`.
@@ -292,6 +337,9 @@ Setup rapido ambiente MPS (Python 3.11):
 - `taa_samples`, `shutter_fraction`, `spatial_jitter`: anti-aliasing temporale e motion blur.
 - `postprocess_pipeline`: `off` o `gargantua` per grading cinematografico in post.
 - `gargantua_look_strength`: intensita' [0..2] del look `gargantua`.
+- `gargantua_look_preset`: preset visuale "one switch" (CLI: `--enable-gargantua-look`) che imposta automaticamente beaming, filmic tonemapper e postprocess.
+- `tone_mapper`: `reinhard`, `aces` o `filmic`.
+- `tone_exposure`, `tone_white_point`, `tone_highlight_rolloff`: controlli esposizione/rolloff del tonemapper (in particolare per highlights violenti del disco).
 - `compile_rhs`, `mixed_precision`: opzioni performance GPU.
 - `mps_optimized_kernel`: abilita fast path MPS (integrazione fixed-step con interpolazione eventi leggera, piu' veloce ma meno accurata del percorso completo adattivo).
 - `camera_fastpath`: abilita init raggi camera ottimizzata (disabilitabile per confronti benchmark con percorso legacy).
@@ -308,7 +356,7 @@ Setup rapido ambiente MPS (Python 3.11):
 
 ## Output
 
-Il renderer salva un PNG e stampa statistiche:
+Il renderer salva immagini LDR (`.png`, `.jpg`, `.webp`) oppure, se richiesto, output float (`.hdr`, `.exr`, richiede `imageio`) e stampa statistiche:
 
 - numero totale di raggi
 - quanti colpiscono il disco

@@ -101,6 +101,63 @@ def _shift_frame_integer(src: np.ndarray, shift_x: float, shift_y: float) -> np.
     return out
 
 
+def _local_min_max_rgb(src: np.ndarray, radius: int) -> tuple[np.ndarray, np.ndarray]:
+    r = max(0, int(radius))
+    if r <= 0:
+        return src.copy(), src.copy()
+    h, w = src.shape[0], src.shape[1]
+    padded = np.pad(src, ((r, r), (r, r), (0, 0)), mode="edge")
+    local_min = np.full_like(src, 255.0, dtype=np.float32)
+    local_max = np.zeros_like(src, dtype=np.float32)
+    for dy in range(-r, r + 1):
+        ys = dy + r
+        row_slice = padded[ys : ys + h, :, :]
+        for dx in range(-r, r + 1):
+            xs = dx + r
+            view = row_slice[:, xs : xs + w, :]
+            local_min = np.minimum(local_min, view)
+            local_max = np.maximum(local_max, view)
+    return local_min, local_max
+
+
+def _apply_temporal_denoise(
+    *,
+    current_u8: np.ndarray,
+    prev_temporal: np.ndarray,
+    prev_cfg: RenderConfig,
+    cur_cfg: RenderConfig,
+    cfg: RenderConfig,
+) -> np.ndarray:
+    cur = current_u8.astype(np.float32, copy=False)
+    shift_x, shift_y = _estimate_motion_shift_pixels(prev_cfg, cur_cfg)
+    reproj = _shift_frame_integer(prev_temporal.astype(np.float32, copy=False), shift_x, shift_y)
+    clamp_v = float(cfg.temporal_clamp)
+    reproj = cur + np.clip(reproj - cur, -clamp_v, clamp_v)
+
+    alpha = float(cfg.temporal_blend)
+    mode = str(cfg.temporal_denoise_mode)
+    if mode == "robust":
+        radius = int(cfg.temporal_denoise_radius)
+        local_min, local_max = _local_min_max_rgb(cur, radius=radius)
+        clip = float(cfg.temporal_denoise_clip)
+        reproj = np.minimum(np.maximum(reproj, local_min - clip), local_max + clip)
+
+        delta = np.abs(reproj - cur)
+        luma_delta = (
+            0.2126 * delta[:, :, 0]
+            + 0.7152 * delta[:, :, 1]
+            + 0.0722 * delta[:, :, 2]
+        )
+        sigma = max(1.0e-6, float(cfg.temporal_denoise_sigma))
+        confidence = np.exp(-np.square(luma_delta / sigma))
+        alpha_map = alpha * confidence
+        out = (1.0 - alpha_map[..., None]) * cur + alpha_map[..., None] * reproj
+        return np.clip(out, 0.0, 255.0)
+
+    out = (1.0 - alpha) * cur + alpha * reproj
+    return np.clip(out, 0.0, 255.0)
+
+
 def _build_generalized_doran_radius_schedule(
     base_config: RenderConfig,
     frames: int,
@@ -177,6 +234,7 @@ def _render_frames(
     base_config: RenderConfig,
     frames_dir: Path,
     frames: int,
+    fps: int,
     azimuth_orbits: float,
     inclination_wobble_deg: float,
     inclination_start_deg: float | None,
@@ -204,6 +262,8 @@ def _render_frames(
 
     if frames <= 0:
         raise ValueError("frames must be >= 1")
+    if fps <= 0:
+        raise ValueError("fps must be >= 1")
     if taa_samples <= 0:
         raise ValueError("taa_samples must be >= 1")
     shutter_fraction = max(0.0, min(1.0, shutter_fraction))
@@ -288,6 +348,8 @@ def _render_frames(
     def config_at_phase(phase_value: float) -> RenderConfig:
         azimuth = base_config.observer_azimuth_deg + 360.0 * azimuth_orbits * phase_value
         wobble = inclination_wobble_deg * math.sin(two_pi * phase_value)
+        duration_s = float(frames) / float(fps)
+        disk_phase = float(base_config.disk_layer_global_phase) + two_pi * float(base_config.disk_layer_phase_rate_hz) * (phase_value * duration_s)
 
         if inclination_start_deg is not None and inclination_end_deg is not None:
             sweep = phase_value
@@ -305,6 +367,7 @@ def _render_frames(
             observer_azimuth_deg=azimuth,
             observer_inclination_deg=inclination,
             observer_radius=radius,
+            disk_layer_global_phase=disk_phase,
         ).validated()
 
     def _frame_steps_for_config(frame_cfg: RenderConfig) -> int:
@@ -361,6 +424,7 @@ def _render_frames(
                 observer_azimuth_deg=frame_config.observer_azimuth_deg,
                 observer_roll_deg=frame_config.observer_roll_deg,
                 max_steps=frame_steps,
+                disk_layer_global_phase=frame_config.disk_layer_global_phase,
             )
 
             x_jitter = 0.0
@@ -478,12 +542,13 @@ def _render_frames(
             index, nominal_cfg, avg_u8, frame_dt, attempts = _render_single_with_retry(index)
         avg = avg_u8.astype(np.float32)
         if base_config.temporal_reprojection and prev_temporal is not None and prev_temporal_cfg is not None:
-            shift_x, shift_y = _estimate_motion_shift_pixels(prev_temporal_cfg, nominal_cfg)
-            reproj = _shift_frame_integer(prev_temporal, shift_x, shift_y)
-            clamp_v = float(base_config.temporal_clamp)
-            reproj = avg + np.clip(reproj - avg, -clamp_v, clamp_v)
-            alpha = float(base_config.temporal_blend)
-            avg = (1.0 - alpha) * avg + alpha * reproj
+            avg = _apply_temporal_denoise(
+                current_u8=avg_u8,
+                prev_temporal=prev_temporal,
+                prev_cfg=prev_temporal_cfg,
+                cur_cfg=nominal_cfg,
+                cfg=base_config,
+            )
 
         prev_temporal = avg.copy()
         prev_temporal_cfg = nominal_cfg
@@ -804,6 +869,7 @@ def render_animation(
                 base_config=cfg,
                 frames_dir=frame_dir,
                 frames=frames,
+                fps=fps,
                 azimuth_orbits=azimuth_orbits,
                 inclination_wobble_deg=inclination_wobble_deg,
                 inclination_start_deg=inclination_start_deg,
