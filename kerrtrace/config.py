@@ -36,12 +36,16 @@ class RenderConfig:
     spin: float = 0.92
     charge: float = 0.0
     cosmological_constant: float = 0.0
+    wormhole_throat_radius: float = 1.0
+    wormhole_length_scale: float = 1.0
+    wormhole_allow_throat_crossing: bool = False
     observer_radius: float = 50.0
     observer_inclination_deg: float = 70.0
     observer_azimuth_deg: float = 0.0
     observer_roll_deg: float = 0.0
     disk_inner_radius: float | None = None
     disk_outer_radius: float = 28.0
+    enable_accretion_disk: bool = True
     emissivity_index: float = 2.3
     inner_edge_boost: float = 2.2
     outer_edge_boost: float = 0.35
@@ -55,6 +59,16 @@ class RenderConfig:
     hdri_path: str | None = None
     hdri_exposure: float = 1.0
     hdri_rotation_deg: float = 0.0
+    wormhole_remote_hdri_path: str | None = None
+    wormhole_remote_hdri_exposure: float = 1.0
+    wormhole_remote_hdri_rotation_deg: float = 0.0
+    wormhole_remote_cubemap_coherent: bool = False
+    wormhole_background_continuous_blend: bool = False
+    wormhole_background_blend_width: float = 0.10
+    wormhole_mt_force_reference_trace: bool = False
+    wormhole_mt_unwrap_phi: bool = False
+    wormhole_mt_shortest_arc_phi_interp: bool = False
+    wormhole_mt_sky_sample_from_xyz: bool = False
     background_meridian_offset_deg: float = 137.5
     meridian_supersample: bool = True
     destripe_meridian: bool = False
@@ -142,6 +156,7 @@ class RenderConfig:
     video_crf: int = 18
     render_tile_rows: int = 0
     camera_fastpath: bool = True
+    atlas_cartesian_variant: bool = False
     cuda_graph_finalize: bool = True
     adaptive_spatial_sampling: bool = False
     adaptive_spatial_preview_steps: int = 96
@@ -183,6 +198,23 @@ class RenderConfig:
     def with_defaults(self) -> "RenderConfig":
         model = canonical_metric_model(self.metric_model)
         cfg = replace(self, metric_model=model)
+
+        if model == "morris_thorne":
+            b0 = max(1.0e-6, float(cfg.wormhole_throat_radius))
+            updates: dict[str, object] = {
+                "spin": 0.0,
+                "charge": 0.0,
+                "cosmological_constant": 0.0,
+                "enable_accretion_disk": False,
+                "physical_disk_model": False,
+                "disk_model": "legacy",
+                "kerr_schild_mode": "off",
+                "kerr_schild_improvements": False,
+            }
+            if cfg.disk_inner_radius is None:
+                updates["disk_inner_radius"] = max(1.5 * b0, 2.0)
+            cfg = replace(cfg, **updates)
+            return cfg
 
         if cfg.disk_inner_radius is None:
             try:
@@ -256,8 +288,14 @@ class RenderConfig:
             raise ValueError("Resolution too high for this reference implementation.")
         if cfg.metric_model not in METRIC_MODELS:
             raise ValueError(f"metric_model must be one of: {', '.join(sorted(METRIC_MODELS))}")
+        is_wormhole = cfg.metric_model == "morris_thorne"
         if cfg.coordinate_system not in {"boyer_lindquist", "kerr_schild", "generalized_doran"}:
             raise ValueError("coordinate_system must be 'boyer_lindquist', 'kerr_schild', or 'generalized_doran'")
+        if is_wormhole and cfg.coordinate_system != "boyer_lindquist":
+            raise ValueError(
+                "metric_model='morris_thorne' currently supports only "
+                "coordinate_system='boyer_lindquist' (variabile areolare)"
+            )
         ks_family = cfg.coordinate_system in {"kerr_schild", "generalized_doran"}
         if ks_family:
             # Generalized KS path: allow all supported metric families, including de Sitter variants.
@@ -288,15 +326,33 @@ class RenderConfig:
             raise ValueError("charge magnitude too large for this implementation (|charge| <= 2)")
         if abs(cfg.cosmological_constant) > 0.2:
             raise ValueError("cosmological_constant magnitude too large for this implementation (|Lambda| <= 0.2)")
+        if cfg.wormhole_throat_radius <= 0.0:
+            raise ValueError("wormhole_throat_radius must be > 0")
+        if cfg.wormhole_length_scale <= 0.0:
+            raise ValueError("wormhole_length_scale must be > 0")
 
         a_eff, _, _ = effective_metric_parameters(cfg.metric_model, cfg.spin, cfg.charge, cfg.cosmological_constant)
         if abs(a_eff) >= 1.0:
             raise ValueError("effective spin must satisfy |a| < 1 for rotating metrics")
 
-        try:
-            horizon = event_horizon_radius(cfg.spin, cfg.metric_model, cfg.charge, cfg.cosmological_constant)
-        except Exception as exc:
-            raise ValueError(f"Invalid metric parameters: no regular event horizon ({exc})") from exc
+        if is_wormhole:
+            horizon = 0.0
+            cfg = replace(
+                cfg,
+                spin=0.0,
+                charge=0.0,
+                cosmological_constant=0.0,
+                enable_accretion_disk=False,
+                physical_disk_model=False,
+                disk_model="legacy",
+                kerr_schild_mode="off",
+                kerr_schild_improvements=False,
+            )
+        else:
+            try:
+                horizon = event_horizon_radius(cfg.spin, cfg.metric_model, cfg.charge, cfg.cosmological_constant)
+            except Exception as exc:
+                raise ValueError(f"Invalid metric parameters: no regular event horizon ({exc})") from exc
 
         _, _, lmb_eff = effective_metric_parameters(cfg.metric_model, cfg.spin, cfg.charge, cfg.cosmological_constant)
         if lmb_eff > 0.0:
@@ -308,7 +364,14 @@ class RenderConfig:
                 if cfg.escape_radius >= 0.995 * cosmological_horizon:
                     raise ValueError("escape_radius must be below the cosmological horizon for de Sitter metrics")
 
-        if cfg.coordinate_system == "generalized_doran":
+        if is_wormhole:
+            if not cfg.wormhole_allow_throat_crossing:
+                if cfg.observer_radius <= max(1.001 * cfg.wormhole_throat_radius, 1.0e-3):
+                    raise ValueError(
+                        "observer_radius must stay outside the wormhole throat radius "
+                        "(or enable wormhole_allow_throat_crossing)"
+                    )
+        elif cfg.coordinate_system == "generalized_doran":
             if cfg.observer_radius <= 1.0e-3:
                 raise ValueError("observer_radius must be > 0 for generalized_doran coordinates")
         else:
@@ -316,7 +379,7 @@ class RenderConfig:
                 raise ValueError("observer_radius must be safely outside the event horizon")
         if cfg.disk_inner_radius is None:
             raise ValueError("disk_inner_radius default resolution failed")
-        if cfg.disk_inner_radius <= max(1.0, 1.001 * horizon):
+        if (not is_wormhole) and cfg.disk_inner_radius <= max(1.0, 1.001 * horizon):
             raise ValueError("disk_inner_radius must be outside the event horizon")
         if cfg.disk_outer_radius <= cfg.disk_inner_radius:
             raise ValueError("disk_outer_radius must be greater than disk_inner_radius")
@@ -334,6 +397,10 @@ class RenderConfig:
             raise ValueError("hdri_path is required when background_mode='hdri'")
         if cfg.hdri_exposure <= 0.0:
             raise ValueError("hdri_exposure must be positive")
+        if cfg.wormhole_remote_hdri_exposure <= 0.0:
+            raise ValueError("wormhole_remote_hdri_exposure must be positive")
+        if cfg.wormhole_background_blend_width <= 0.0 or cfg.wormhole_background_blend_width > 100.0:
+            raise ValueError("wormhole_background_blend_width must be in (0, 100]")
         if not (-1.0e6 <= cfg.background_meridian_offset_deg <= 1.0e6):
             raise ValueError("background_meridian_offset_deg is outside a sane range")
         if not (0.0 <= cfg.star_density <= 0.05):

@@ -90,17 +90,24 @@ def _parse_args() -> argparse.Namespace:
             "kerr_de_sitter",
             "reissner_nordstrom_de_sitter",
             "kerr_newman_de_sitter",
+            "morris_thorne",
         ],
     )
     parser.add_argument("--spin", type=float)
     parser.add_argument("--charge", type=float)
     parser.add_argument("--cosmological-constant", type=float)
+    parser.add_argument("--wormhole-throat-radius", type=float)
+    parser.add_argument("--wormhole-length-scale", type=float)
+    parser.add_argument("--enable-wormhole-throat-crossing", action="store_true")
+    parser.add_argument("--disable-wormhole-throat-crossing", action="store_true")
     parser.add_argument("--observer-radius", type=float)
     parser.add_argument("--observer-inclination-deg", type=float)
     parser.add_argument("--observer-azimuth-deg", type=float)
     parser.add_argument("--observer-roll-deg", type=float)
     parser.add_argument("--disk-inner-radius", type=float)
     parser.add_argument("--disk-outer-radius", type=float)
+    parser.add_argument("--disable-accretion-disk", action="store_true")
+    parser.add_argument("--enable-accretion-disk", action="store_true")
     parser.add_argument("--disk-model", choices=["legacy", "physical_nt"])
     parser.add_argument("--disk-radial-profile", choices=["nt_proxy", "nt_page_thorne"])
     parser.add_argument("--emissivity-index", type=float)
@@ -115,6 +122,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--hdri-path", type=str)
     parser.add_argument("--hdri-exposure", type=float)
     parser.add_argument("--hdri-rotation-deg", type=float)
+    parser.add_argument("--wormhole-remote-hdri-path", type=str)
+    parser.add_argument("--wormhole-remote-hdri-exposure", type=float)
+    parser.add_argument("--wormhole-remote-hdri-rotation-deg", type=float)
+    parser.add_argument("--enable-wormhole-remote-cubemap-coherent", action="store_true")
+    parser.add_argument("--disable-wormhole-remote-cubemap-coherent", action="store_true")
+    parser.add_argument("--wormhole-background-blend-width", type=float)
+    parser.add_argument("--enable-wormhole-background-continuous-blend", action="store_true")
+    parser.add_argument("--disable-wormhole-background-continuous-blend", action="store_true")
+    parser.add_argument("--enable-wormhole-mt-force-reference-trace", action="store_true")
+    parser.add_argument("--disable-wormhole-mt-force-reference-trace", action="store_true")
+    parser.add_argument("--enable-wormhole-mt-unwrap-phi", action="store_true")
+    parser.add_argument("--disable-wormhole-mt-unwrap-phi", action="store_true")
+    parser.add_argument("--enable-wormhole-mt-shortest-arc-phi", action="store_true")
+    parser.add_argument("--disable-wormhole-mt-shortest-arc-phi", action="store_true")
+    parser.add_argument("--enable-wormhole-mt-sky-from-xyz", action="store_true")
+    parser.add_argument("--disable-wormhole-mt-sky-from-xyz", action="store_true")
     parser.add_argument("--background-meridian-offset-deg", type=float)
     parser.add_argument("--disable-star-background", action="store_true")
     parser.add_argument("--disable-meridian-supersample", action="store_true")
@@ -238,6 +261,19 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--disable-camera-fastpath", action="store_true", help="Use legacy camera-ray initialization path")
     parser.add_argument("--enable-camera-fastpath", action="store_true", help="Use optimized camera-ray initialization path")
+    parser.add_argument(
+        "--enable-atlas-cartesian-variant",
+        action="store_true",
+        help=(
+            "Enable atlas/cartesian camera variant in Kerr-Schild-family coordinates "
+            "(preserves pole azimuth continuity; useful for axis sweeps)"
+        ),
+    )
+    parser.add_argument(
+        "--disable-atlas-cartesian-variant",
+        action="store_true",
+        help="Disable atlas/cartesian camera variant and use legacy BL-angle regularization",
+    )
     parser.add_argument(
         "--enable-roi-supersampling",
         action="store_true",
@@ -432,12 +468,16 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "spin": args.spin,
         "charge": args.charge,
         "cosmological_constant": args.cosmological_constant,
+        "wormhole_throat_radius": args.wormhole_throat_radius,
+        "wormhole_length_scale": args.wormhole_length_scale,
+        "wormhole_allow_throat_crossing": None,
         "observer_radius": args.observer_radius,
         "observer_inclination_deg": args.observer_inclination_deg,
         "observer_azimuth_deg": args.observer_azimuth_deg,
         "observer_roll_deg": args.observer_roll_deg,
         "disk_inner_radius": args.disk_inner_radius,
         "disk_outer_radius": args.disk_outer_radius,
+        "enable_accretion_disk": None,
         "disk_model": args.disk_model,
         "disk_radial_profile": args.disk_radial_profile,
         "emissivity_index": args.emissivity_index,
@@ -452,6 +492,15 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "hdri_path": args.hdri_path,
         "hdri_exposure": args.hdri_exposure,
         "hdri_rotation_deg": args.hdri_rotation_deg,
+        "wormhole_remote_hdri_path": args.wormhole_remote_hdri_path,
+        "wormhole_remote_hdri_exposure": args.wormhole_remote_hdri_exposure,
+        "wormhole_remote_hdri_rotation_deg": args.wormhole_remote_hdri_rotation_deg,
+        "wormhole_remote_cubemap_coherent": None,
+        "wormhole_background_blend_width": args.wormhole_background_blend_width,
+        "wormhole_mt_force_reference_trace": None,
+        "wormhole_mt_unwrap_phi": None,
+        "wormhole_mt_shortest_arc_phi_interp": None,
+        "wormhole_mt_sky_sample_from_xyz": None,
         "background_meridian_offset_deg": args.background_meridian_offset_deg,
         "disk_temperature_inner": args.disk_temperature_inner,
         "disk_color_correction": args.disk_color_correction,
@@ -543,6 +592,38 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["disk_inner_radius"] = None
     if args.disable_star_background:
         updates["enable_star_background"] = False
+    if args.enable_wormhole_throat_crossing:
+        updates["wormhole_allow_throat_crossing"] = True
+    if args.disable_wormhole_throat_crossing:
+        updates["wormhole_allow_throat_crossing"] = False
+    if args.enable_wormhole_remote_cubemap_coherent:
+        updates["wormhole_remote_cubemap_coherent"] = True
+    if args.disable_wormhole_remote_cubemap_coherent:
+        updates["wormhole_remote_cubemap_coherent"] = False
+    if args.enable_wormhole_background_continuous_blend:
+        updates["wormhole_background_continuous_blend"] = True
+    if args.disable_wormhole_background_continuous_blend:
+        updates["wormhole_background_continuous_blend"] = False
+    if args.enable_wormhole_mt_force_reference_trace:
+        updates["wormhole_mt_force_reference_trace"] = True
+    if args.disable_wormhole_mt_force_reference_trace:
+        updates["wormhole_mt_force_reference_trace"] = False
+    if args.enable_wormhole_mt_unwrap_phi:
+        updates["wormhole_mt_unwrap_phi"] = True
+    if args.disable_wormhole_mt_unwrap_phi:
+        updates["wormhole_mt_unwrap_phi"] = False
+    if args.enable_wormhole_mt_shortest_arc_phi:
+        updates["wormhole_mt_shortest_arc_phi_interp"] = True
+    if args.disable_wormhole_mt_shortest_arc_phi:
+        updates["wormhole_mt_shortest_arc_phi_interp"] = False
+    if args.enable_wormhole_mt_sky_from_xyz:
+        updates["wormhole_mt_sky_sample_from_xyz"] = True
+    if args.disable_wormhole_mt_sky_from_xyz:
+        updates["wormhole_mt_sky_sample_from_xyz"] = False
+    if args.disable_accretion_disk:
+        updates["enable_accretion_disk"] = False
+    if args.enable_accretion_disk:
+        updates["enable_accretion_disk"] = True
     if args.disable_meridian_supersample:
         updates["meridian_supersample"] = False
     if args.enable_meridian_destripe:
@@ -605,6 +686,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["camera_fastpath"] = False
     if args.enable_camera_fastpath:
         updates["camera_fastpath"] = True
+    if args.enable_atlas_cartesian_variant:
+        updates["atlas_cartesian_variant"] = True
+    if args.disable_atlas_cartesian_variant:
+        updates["atlas_cartesian_variant"] = False
     if args.disable_cuda_graph_finalize:
         updates["cuda_graph_finalize"] = False
     if args.enable_cuda_graph_finalize:

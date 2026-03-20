@@ -22,6 +22,7 @@ METRIC_MODELS = {
     "kerr_de_sitter",
     "reissner_nordstrom_de_sitter",
     "kerr_newman_de_sitter",
+    "morris_thorne",
 }
 
 
@@ -75,6 +76,8 @@ def horizon_radii(
     charge: float = 0.0,
     cosmological_constant: float = 0.0,
 ) -> list[float]:
+    if canonical_metric_model(metric_model) == "morris_thorne":
+        return []
     a, q, lmb = effective_metric_parameters(metric_model, spin, charge, cosmological_constant)
 
     if abs(lmb) < 1.0e-14:
@@ -102,6 +105,8 @@ def event_horizon_radius(
     charge: float = 0.0,
     cosmological_constant: float = 0.0,
 ) -> float:
+    if canonical_metric_model(metric_model) == "morris_thorne":
+        raise ValueError("Morris-Thorne wormhole has no event horizon")
     _, _, lmb = effective_metric_parameters(metric_model, spin, charge, cosmological_constant)
     real_pos = horizon_radii(spin, metric_model, charge, cosmological_constant)
     if not real_pos:
@@ -152,7 +157,25 @@ def metric_components(
     metric_model: str = "kerr",
     charge: float = 0.0,
     cosmological_constant: float = 0.0,
+    wormhole_throat_radius: float = 1.0,
+    wormhole_length_scale: float = 1.0,
 ) -> MetricComponents:
+    if canonical_metric_model(metric_model) == "morris_thorne":
+        b0 = torch.as_tensor(max(1.0e-6, float(wormhole_throat_radius)), dtype=r.dtype, device=r.device)
+        length_scale = torch.as_tensor(max(1.0e-6, float(wormhole_length_scale)), dtype=r.dtype, device=r.device)
+        inv_len = 1.0 / length_scale
+        b02 = b0 * b0
+        sin2 = torch.clamp(torch.sin(theta) * torch.sin(theta), min=SIN2_EPS)
+        l_eff = r * inv_len
+        rho2 = l_eff * l_eff + b02
+        rho2_safe = torch.clamp(rho2, min=DIV_EPS)
+        g_tt = -torch.ones_like(r)
+        g_tphi = torch.zeros_like(r)
+        g_rr = torch.ones_like(r) * (inv_len * inv_len)
+        g_thth = rho2_safe
+        g_phiphi = rho2_safe * sin2
+        return MetricComponents(g_tt=g_tt, g_tphi=g_tphi, g_rr=g_rr, g_thth=g_thth, g_phiphi=g_phiphi)
+
     sigma, delta_r, delta_theta, sin2, a, xi = _knds_common(r, theta, metric_model, spin, charge, cosmological_constant)
     sigma_safe = torch.clamp(sigma, min=DIV_EPS)
     delta_r_safe = _safe_divisor(delta_r)
@@ -177,7 +200,23 @@ def inverse_metric_components(
     metric_model: str = "kerr",
     charge: float = 0.0,
     cosmological_constant: float = 0.0,
+    wormhole_throat_radius: float = 1.0,
+    wormhole_length_scale: float = 1.0,
 ) -> InverseMetricComponents:
+    if canonical_metric_model(metric_model) == "morris_thorne":
+        b0 = torch.as_tensor(max(1.0e-6, float(wormhole_throat_radius)), dtype=r.dtype, device=r.device)
+        length_scale = torch.as_tensor(max(1.0e-6, float(wormhole_length_scale)), dtype=r.dtype, device=r.device)
+        b02 = b0 * b0
+        sin2 = torch.clamp(torch.sin(theta) * torch.sin(theta), min=SIN2_EPS)
+        l_eff = r / length_scale
+        rho2 = torch.clamp(l_eff * l_eff + b02, min=DIV_EPS)
+        gtt = -torch.ones_like(r)
+        gtphi = torch.zeros_like(r)
+        grr = torch.ones_like(r) * (length_scale * length_scale)
+        gthth = 1.0 / rho2
+        gphiphi = 1.0 / torch.clamp(rho2 * sin2, min=DIV_EPS)
+        return InverseMetricComponents(gtt=gtt, gtphi=gtphi, grr=grr, gthth=gthth, gphiphi=gphiphi)
+
     sigma, delta_r, delta_theta, sin2, a, xi = _knds_common(r, theta, metric_model, spin, charge, cosmological_constant)
     sigma_safe = torch.clamp(sigma, min=DIV_EPS)
     delta_r_safe = _safe_divisor(delta_r)
@@ -203,20 +242,45 @@ def inverse_metric_derivatives(
     metric_model: str = "kerr",
     charge: float = 0.0,
     cosmological_constant: float = 0.0,
+    wormhole_throat_radius: float = 1.0,
+    wormhole_length_scale: float = 1.0,
     r_rel_eps: float = 1.0e-4,
     theta_eps: float = 1.0e-5,
 ) -> tuple[InverseMetricComponents, InverseMetricComponents]:
+    model = canonical_metric_model(metric_model)
     one = torch.ones_like(r)
     eps_r = r_rel_eps * torch.maximum(r.abs(), one)
 
-    r_plus = torch.clamp(r + eps_r, min=1.0e-3)
-    r_minus = torch.clamp(r - eps_r, min=1.0e-3)
+    if model == "morris_thorne":
+        r_plus = r + eps_r
+        r_minus = r - eps_r
+    else:
+        r_plus = torch.clamp(r + eps_r, min=1.0e-3)
+        r_minus = torch.clamp(r - eps_r, min=1.0e-3)
 
     th_plus = torch.clamp(theta + theta_eps, min=THETA_EPS, max=math.pi - THETA_EPS)
     th_minus = torch.clamp(theta - theta_eps, min=THETA_EPS, max=math.pi - THETA_EPS)
 
-    inv_r_plus = inverse_metric_components(r_plus, theta, spin, metric_model, charge, cosmological_constant)
-    inv_r_minus = inverse_metric_components(r_minus, theta, spin, metric_model, charge, cosmological_constant)
+    inv_r_plus = inverse_metric_components(
+        r_plus,
+        theta,
+        spin,
+        metric_model,
+        charge,
+        cosmological_constant,
+        wormhole_throat_radius,
+        wormhole_length_scale,
+    )
+    inv_r_minus = inverse_metric_components(
+        r_minus,
+        theta,
+        spin,
+        metric_model,
+        charge,
+        cosmological_constant,
+        wormhole_throat_radius,
+        wormhole_length_scale,
+    )
     dr = torch.clamp(r_plus - r_minus, min=1.0e-9)
 
     d_r = InverseMetricComponents(
@@ -227,8 +291,26 @@ def inverse_metric_derivatives(
         gphiphi=(inv_r_plus.gphiphi - inv_r_minus.gphiphi) / dr,
     )
 
-    inv_th_plus = inverse_metric_components(r, th_plus, spin, metric_model, charge, cosmological_constant)
-    inv_th_minus = inverse_metric_components(r, th_minus, spin, metric_model, charge, cosmological_constant)
+    inv_th_plus = inverse_metric_components(
+        r,
+        th_plus,
+        spin,
+        metric_model,
+        charge,
+        cosmological_constant,
+        wormhole_throat_radius,
+        wormhole_length_scale,
+    )
+    inv_th_minus = inverse_metric_components(
+        r,
+        th_minus,
+        spin,
+        metric_model,
+        charge,
+        cosmological_constant,
+        wormhole_throat_radius,
+        wormhole_length_scale,
+    )
     dth = torch.clamp(th_plus - th_minus, min=1.0e-9)
 
     d_theta = InverseMetricComponents(
@@ -407,6 +489,8 @@ def isco_radius_general(
     KerrTrace and works with (spin, charge, cosmological_constant) combinations.
     """
     model = canonical_metric_model(metric_model)
+    if model == "morris_thorne":
+        raise ValueError("ISCO is not defined for Morris-Thorne wormhole metric")
     horizon = event_horizon_radius(spin, model, charge, cosmological_constant)
     roots = horizon_radii(spin, model, charge, cosmological_constant)
     _, _, lmb = effective_metric_parameters(model, spin, charge, cosmological_constant)

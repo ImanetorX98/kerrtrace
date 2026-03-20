@@ -313,6 +313,8 @@ Setup rapido ambiente MPS (Python 3.11):
 - `background_projection`: `cubemap` (consigliato, seam-free) o `equirectangular` (legacy).
 - `cubemap_face_size`: risoluzione per faccia della cubemap (tipico: 512-1024).
 - `hdri_path`, `hdri_exposure`, `hdri_rotation_deg`: controlli sfondo HDRI.
+- `wormhole_remote_hdri_path`, `wormhole_remote_hdri_exposure`, `wormhole_remote_hdri_rotation_deg`: sfondo remoto del wormhole (lato opposto della gola).
+- `wormhole_background_continuous_blend`, `wormhole_background_blend_width`: blend continuo locale/remoto vicino a `r=0` (riduce seam da switch netto).
 - `background_meridian_offset_deg`: ruota il meridiano di seam dello sfondo.
 - `star_density`, `star_brightness`, `star_seed`: densita', intensita' e seed dello sfondo stellare.
 - `disk_model`: `physical_nt` (profilo fisico thin-disk relativistico) oppure `legacy` (palette cinematica).
@@ -343,6 +345,7 @@ Setup rapido ambiente MPS (Python 3.11):
 - `compile_rhs`, `mixed_precision`: opzioni performance GPU.
 - `mps_optimized_kernel`: abilita fast path MPS (integrazione fixed-step con interpolazione eventi leggera, piu' veloce ma meno accurata del percorso completo adattivo).
 - `camera_fastpath`: abilita init raggi camera ottimizzata (disabilitabile per confronti benchmark con percorso legacy).
+- `atlas_cartesian_variant`: attiva una variante camera atlas-safe per preservare continuita' azimutale vicino ai poli (Kerr-Schild/Generalized-Doran e anche Morris-Thorne in Boyer-Lindquist).
 - `adaptive_spatial_sampling`: abilita scheduling adattivo per-blocco di `max_steps` su base complessita' spaziale (preview + gradiente), utile per ridurre tempo mantenendo i dettagli difficili.
 - `adaptive_spatial_preview_steps`: `max_steps` usato nel pass di preview per stimare la complessita' spaziale.
 - `adaptive_spatial_min_scale`: scala minima applicata a `max_steps` nei blocchi a bassa complessita'.

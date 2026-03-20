@@ -18,8 +18,10 @@ from PIL import Image, ImageStat
 import streamlit as st
 
 if os.name == "posix":
+    import fcntl
     import pty
 else:
+    fcntl = None
     pty = None
 
 try:
@@ -51,6 +53,7 @@ CHOICE_FIELDS: dict[str, list[str]] = {
         "kerr_de_sitter",
         "reissner_nordstrom_de_sitter",
         "kerr_newman_de_sitter",
+        "morris_thorne",
     ],
     "disk_model": ["physical_nt", "legacy"],
     "disk_radial_profile": ["nt_proxy", "nt_page_thorne"],
@@ -67,10 +70,36 @@ CHOICE_FIELDS: dict[str, list[str]] = {
     "postprocess_pipeline": ["off", "gargantua"],
 }
 
+PARAM_SUPPORTED_METRICS: dict[str, set[str]] = {
+    "spin": {
+        "kerr",
+        "kerr_newman",
+        "kerr_de_sitter",
+        "kerr_newman_de_sitter",
+    },
+    "charge": {
+        "reissner_nordstrom",
+        "kerr_newman",
+        "reissner_nordstrom_de_sitter",
+        "kerr_newman_de_sitter",
+    },
+    "lambda": {
+        "schwarzschild_de_sitter",
+        "kerr_de_sitter",
+        "reissner_nordstrom_de_sitter",
+        "kerr_newman_de_sitter",
+    },
+}
+
 AUTHOR_SIGNATURE = "Iman Rosignoli"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".gif"}
 MEDIA_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
+PROGRESSIVE_STATE_FILENAME = ".webui_progressive_state.json"
+PROGRESSIVE_INDEX_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)(?:^|[_-])progressiv[oa]?[_-]?(\d{1,9})(?:$|[_-])"),
+    re.compile(r"(?i)(?:^|[_-])p(\d{1,9})(?:$|[_-])"),
+)
 PRESET_CRITICAL_FIELDS: list[str] = [
     "coordinate_system",
     "metric_model",
@@ -473,6 +502,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Compile RHS": "Compila RHS",
         "Mixed precision": "Precisione mista",
         "Camera fastpath": "Camera fastpath",
+        "Atlas/cartesian camera variant": "Variante camera atlas/cartesiana",
         "Adaptive spatial sampling": "Campionamento spaziale adattivo",
         "Adaptive preview steps": "Step preview adattiva",
         "Adaptive min scale": "Scala minima adattiva",
@@ -578,6 +608,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Compile RHS": "RHS kompilieren",
         "Mixed precision": "Gemischte Präzision",
         "Camera fastpath": "Kamera-Fastpath",
+        "Atlas/cartesian camera variant": "Atlas-/kartesische Kameravariante",
         "Adaptive spatial sampling": "Adaptives räumliches Sampling",
         "Adaptive preview steps": "Adaptive Vorschau-Schritte",
         "Adaptive min scale": "Adaptive Mindest-Skalierung",
@@ -781,6 +812,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Compile RHS": "Compilează RHS",
         "Mixed precision": "Precizie mixtă",
         "Camera fastpath": "Cale rapidă cameră",
+        "Atlas/cartesian camera variant": "Variantă cameră atlas/carteziană",
         "Adaptive spatial sampling": "Eșantionare spațială adaptivă",
         "Adaptive preview steps": "Pași preview adaptivi",
         "Adaptive min scale": "Scală minimă adaptivă",
@@ -886,6 +918,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Compile RHS": "编译 RHS",
         "Mixed precision": "混合精度",
         "Camera fastpath": "相机快速路径",
+        "Atlas/cartesian camera variant": "Atlas/笛卡尔相机变体",
         "Adaptive spatial sampling": "自适应空间采样",
         "Adaptive preview steps": "自适应预览步数",
         "Adaptive min scale": "自适应最小缩放",
@@ -990,6 +1023,48 @@ def _safe_choice(options: list[str], value: str) -> str:
     if value in options:
         return value
     return options[0]
+
+
+def _coordinate_options_for_metric(metric_model: str) -> list[str]:
+    if metric_model == "morris_thorne":
+        return ["boyer_lindquist"]
+    return list(CHOICE_FIELDS["coordinate_system"])
+
+
+def _coordinate_label_for_metric(coordinate_system: str, metric_model: str) -> str:
+    if metric_model == "morris_thorne" and coordinate_system == "boyer_lindquist":
+        return "variabile_areolare"
+    return coordinate_system
+
+
+def _metric_supports_parameters(metric_model: str) -> tuple[bool, bool, bool]:
+    """
+    Return support flags for (spin, charge, cosmological_constant).
+    """
+    model = str(metric_model)
+    supports_spin = model in PARAM_SUPPORTED_METRICS["spin"]
+    supports_charge = model in PARAM_SUPPORTED_METRICS["charge"]
+    supports_lambda = model in PARAM_SUPPORTED_METRICS["lambda"]
+    return supports_spin, supports_charge, supports_lambda
+
+
+def _metric_param_tooltip(metric_model: str, param_key: str, enabled: bool, lang: str) -> str:
+    supported = sorted(PARAM_SUPPORTED_METRICS.get(param_key, set()))
+    supported_txt = ", ".join(supported) if supported else "n/a"
+    model = str(metric_model)
+    if lang == "it":
+        if enabled:
+            return (
+                f"Parametro attivo per la metrica `{model}`. "
+                f"Metriche supportate: {supported_txt}."
+            )
+        return (
+            f"Parametro disattivato: la metrica `{model}` non lo utilizza. "
+            f"Metriche che lo supportano: {supported_txt}."
+        )
+    if enabled:
+        return f"Enabled for `{model}`. Supported metrics: {supported_txt}."
+    return f"Disabled: `{model}` does not use this parameter. Supported metrics: {supported_txt}."
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -1410,6 +1485,121 @@ def _latest_media_in_out(workspace_path: Path, suffix: str | None = None) -> Pat
     return None
 
 
+def _extract_progressive_index_from_stem(stem: str) -> int:
+    max_idx = 0
+    for pat in PROGRESSIVE_INDEX_PATTERNS:
+        for m in pat.finditer(stem):
+            try:
+                max_idx = max(max_idx, int(m.group(1)))
+            except Exception:
+                continue
+    return max_idx
+
+
+def _strip_progressive_tokens_from_stem(stem: str) -> str:
+    clean = str(stem).replace("{progressivo}", "").replace("{PROGRESSIVO}", "")
+    clean = re.sub(r"(?i)(?:[_-]?progressiv[oa]?[_-]?\d*)$", "", clean).rstrip("_- ")
+    clean = re.sub(r"(?i)(?:[_-]?p\d+)$", "", clean).rstrip("_- ")
+    return clean or "render"
+
+
+def _scan_max_progressive_index_in_out(out_dir: Path) -> int:
+    if not out_dir.exists():
+        return 0
+    max_idx = 0
+    for child in out_dir.glob("**/*"):
+        if not child.is_file():
+            continue
+        if child.name == PROGRESSIVE_STATE_FILENAME:
+            continue
+        idx = _extract_progressive_index_from_stem(child.stem)
+        if idx > max_idx:
+            max_idx = idx
+    return max_idx
+
+
+def _read_progressive_state_unlocked(fh: Any) -> dict[str, Any]:
+    try:
+        fh.seek(0)
+        raw = fh.read()
+        if not raw:
+            return {}
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _is_path_inside_dir(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _to_workspace_relative_or_abs(path: Path, workspace_path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(workspace_path.resolve()))
+    except Exception:
+        return str(path.resolve())
+
+
+def _reserve_progressive_output_path(
+    *,
+    workspace_path: Path,
+    requested_output: str,
+) -> tuple[str, int | None]:
+    requested_raw = str(requested_output or "").strip()
+    if not requested_raw:
+        return requested_output, None
+
+    req_path = Path(requested_raw).expanduser()
+    req_abs = (workspace_path / req_path).resolve() if not req_path.is_absolute() else req_path.resolve()
+    out_dir = (workspace_path / "out").resolve()
+    if not _is_path_inside_dir(req_abs, out_dir):
+        return requested_output, None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    req_abs.parent.mkdir(parents=True, exist_ok=True)
+    state_path = out_dir / PROGRESSIVE_STATE_FILENAME
+    state_path.touch(exist_ok=True)
+
+    try:
+        with state_path.open("r+", encoding="utf-8") as fh:
+            if fcntl is not None:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            state = _read_progressive_state_unlocked(fh)
+            try:
+                last_allocated = int(state.get("last_allocated", 0))
+            except Exception:
+                last_allocated = 0
+            max_on_disk = _scan_max_progressive_index_in_out(out_dir)
+            next_idx = max(last_allocated, max_on_disk) + 1
+
+            clean_stem = _strip_progressive_tokens_from_stem(req_abs.stem)
+            next_name = f"{clean_stem}_p{next_idx:06d}{req_abs.suffix}"
+            next_abs = req_abs.with_name(next_name)
+
+            state.update(
+                {
+                    "last_allocated": int(next_idx),
+                    "last_allocated_output": str(next_abs),
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                }
+            )
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps(state, indent=2))
+            fh.flush()
+            if fcntl is not None:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        return requested_output, None
+
+    return _to_workspace_relative_or_abs(next_abs, workspace_path), int(next_idx)
+
+
 def _resolve_output_file(
     log_text: str,
     workspace_path: Path,
@@ -1727,6 +1917,13 @@ def _preflight_physical_checks(
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
+    model = str(cfg_obj.metric_model)
+    if model == "morris_thorne":
+        if str(cfg_obj.coordinate_system) != "boyer_lindquist":
+            errors.append("Morris-Thorne supporta solo coordinate in variabile areolare.")
+        if bool(cfg_obj.enable_accretion_disk):
+            warnings.append("Nel wormhole il disco di accrescimento è disattivato automaticamente.")
+        return errors, warnings
     try:
         horizon = float(
             event_horizon_radius(
@@ -1743,7 +1940,6 @@ def _preflight_physical_checks(
     rout = float(cfg_obj.disk_outer_radius)
     robs = float(cfg_obj.observer_radius)
     coord = str(cfg_obj.coordinate_system)
-    model = str(cfg_obj.metric_model)
 
     if robs < rout * 0.55:
         warnings.append(
@@ -1838,6 +2034,21 @@ def main() -> None:
         st.session_state["ui_lang"] = "it"
 
     st.set_page_config(page_title=tr(lang, "page_title", "KerrTrace WebUI"), layout="wide")
+    st.markdown(
+        """
+<style>
+div[data-testid="stNumberInput"] input:disabled,
+div[data-testid="stTextInput"] input:disabled {
+  background-color: #1a1f2b !important;
+  color: #9aa4b2 !important;
+  -webkit-text-fill-color: #9aa4b2 !important;
+  border: 1px solid #30384a !important;
+  opacity: 1 !important;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.title(tr(lang, "title", "KerrTrace WebUI"))
     st.markdown(f"**{tr(lang, 'author_label', 'Autore')}:** `{AUTHOR_SIGNATURE}`")
     st.caption(
@@ -2270,13 +2481,6 @@ def main() -> None:
         else:
             output_path = st.text_input(tfield(lang, "Output file"), value=output_seed_raw)
         fov_deg = st.number_input(tfield(lang, "FOV (deg)"), value=float(cfg_seed["fov_deg"]), step=0.1, format="%.3f")
-        coordinate_system = st.selectbox(
-            tfield(lang, "Coordinate system"),
-            options=CHOICE_FIELDS["coordinate_system"],
-            index=CHOICE_FIELDS["coordinate_system"].index(
-                _safe_choice(CHOICE_FIELDS["coordinate_system"], str(cfg_seed["coordinate_system"]))
-            ),
-        )
         metric_model = st.selectbox(
             tfield(lang, "Metric model"),
             options=CHOICE_FIELDS["metric_model"],
@@ -2284,6 +2488,18 @@ def main() -> None:
                 _safe_choice(CHOICE_FIELDS["metric_model"], str(cfg_seed["metric_model"]))
             ),
         )
+        coord_options = _coordinate_options_for_metric(metric_model)
+        coord_seed = _safe_choice(coord_options, str(cfg_seed["coordinate_system"]))
+        coordinate_system = st.selectbox(
+            tfield(lang, "Coordinate system"),
+            options=coord_options,
+            index=coord_options.index(coord_seed),
+            format_func=lambda c: _coordinate_label_for_metric(c, metric_model),
+            disabled=(not bool(metric_model)),
+        )
+        if metric_model == "morris_thorne":
+            st.caption("Per Morris-Thorne è disponibile solo la coordinata in variabile areolare.")
+        supports_spin, supports_charge, supports_lambda = _metric_supports_parameters(metric_model)
     with c2:
         spin_default = max(-1.0, min(1.0, float(cfg_seed["spin"])))
         charge_default = max(-1.0, min(1.0, float(cfg_seed["charge"])))
@@ -2292,23 +2508,29 @@ def main() -> None:
             tfield(lang, "Spin a"),
             min_value=-1.0,
             max_value=1.0,
-            value=spin_default,
+            value=(spin_default if supports_spin else 0.0),
             step=0.01,
             format="%.6f",
+            disabled=(not supports_spin),
+            help=_metric_param_tooltip(metric_model, "spin", supports_spin, lang),
         )
         charge = st.number_input(
             tfield(lang, "Charge Q"),
             min_value=-1.0,
             max_value=1.0,
-            value=charge_default,
+            value=(charge_default if supports_charge else 0.0),
             step=0.01,
             format="%.6f",
+            disabled=(not supports_charge),
+            help=_metric_param_tooltip(metric_model, "charge", supports_charge, lang),
         )
         cosmological_constant = st.number_input(
             tfield(lang, "Lambda"),
-            value=float(cfg_seed["cosmological_constant"]),
+            value=(float(cfg_seed["cosmological_constant"]) if supports_lambda else 0.0),
             step=0.000001,
             format="%.9f",
+            disabled=(not supports_lambda),
+            help=_metric_param_tooltip(metric_model, "lambda", supports_lambda, lang),
         )
         observer_radius = st.number_input(tfield(lang, "Observer radius"), value=float(cfg_seed["observer_radius"]), step=0.5)
         observer_inclination_deg = st.number_input(
@@ -2335,6 +2557,15 @@ def main() -> None:
             value=roll_default,
             step=0.5,
         )
+        disabled_labels: list[str] = []
+        if not supports_spin:
+            disabled_labels.append("spin")
+        if not supports_charge:
+            disabled_labels.append("charge")
+        if not supports_lambda:
+            disabled_labels.append("lambda")
+        if disabled_labels:
+            st.caption(f"Parametri non usati dalla metrica selezionata: {', '.join(disabled_labels)}.")
         disk_model = st.selectbox(
             tfield(lang, "Disk model"),
             options=CHOICE_FIELDS["disk_model"],
@@ -2558,6 +2789,36 @@ def main() -> None:
         compile_rhs = st.checkbox(tfield(lang, "Compile RHS"), value=bool(cfg_seed["compile_rhs"]))
         mixed_precision = st.checkbox(tfield(lang, "Mixed precision"), value=bool(cfg_seed["mixed_precision"]))
         camera_fastpath = st.checkbox(tfield(lang, "Camera fastpath"), value=bool(cfg_seed["camera_fastpath"]))
+        atlas_cartesian_variant = st.checkbox(
+            tfield(lang, "Atlas/cartesian camera variant"),
+            value=bool(cfg_seed.get("atlas_cartesian_variant", False)),
+            help="Per coordinate Kerr-Schild/Generalized-Doran: preserva la continuita' azimutale vicino ai poli.",
+        )
+        mt_metric_active = metric_model == "morris_thorne"
+        wormhole_mt_force_reference_trace = st.checkbox(
+            "Morris-Thorne: force robust tracer",
+            value=bool(cfg_seed.get("wormhole_mt_force_reference_trace", False)),
+            disabled=(not mt_metric_active),
+            help="Disattiva il fast path MPS e usa il tracer robusto (_trace) per ridurre seam/artefatti.",
+        )
+        wormhole_mt_unwrap_phi = st.checkbox(
+            "Morris-Thorne: phi unwrapped",
+            value=bool(cfg_seed.get("wormhole_mt_unwrap_phi", False)),
+            disabled=(not mt_metric_active),
+            help="Mantiene phi non wrapped durante l'integrazione geodetica.",
+        )
+        wormhole_mt_shortest_arc_phi_interp = st.checkbox(
+            "Morris-Thorne: shortest-arc phi interpolation",
+            value=bool(cfg_seed.get("wormhole_mt_shortest_arc_phi_interp", False)),
+            disabled=(not mt_metric_active),
+            help="Interpolazione angolare robusta vicino al branch cut.",
+        )
+        wormhole_mt_sky_sample_from_xyz = st.checkbox(
+            "Morris-Thorne: sky sample from XYZ",
+            value=bool(cfg_seed.get("wormhole_mt_sky_sample_from_xyz", False)),
+            disabled=(not mt_metric_active),
+            help="Ricava gli angoli sky da direzioni cartesiane finali (meno sensibile alle seam di phi).",
+        )
         roi_supersampling = st.checkbox(
             tfield(lang, "ROI supersampling"),
             value=bool(cfg_seed.get("roi_supersampling", False)),
@@ -2815,6 +3076,43 @@ def main() -> None:
             value=hdri_rotation_default,
             step=1.0,
         )
+        wormhole_remote_hdri_path = st.text_input(
+            tfield(lang, "Wormhole remote HDRI path"),
+            value=str(cfg_seed.get("wormhole_remote_hdri_path") or ""),
+        )
+        wormhole_remote_hdri_exposure = st.number_input(
+            tfield(lang, "Wormhole remote HDRI exposure"),
+            min_value=0.01,
+            value=float(cfg_seed.get("wormhole_remote_hdri_exposure", 1.0)),
+            step=0.1,
+        )
+        wormhole_remote_hdri_rotation_default = _clamp(float(cfg_seed.get("wormhole_remote_hdri_rotation_deg", 0.0)), 0.0, 360.0)
+        wormhole_remote_hdri_rotation_deg = st.number_input(
+            tfield(lang, "Wormhole remote HDRI rotation (deg)"),
+            min_value=0.0,
+            max_value=360.0,
+            value=wormhole_remote_hdri_rotation_default,
+            step=1.0,
+        )
+        wormhole_remote_cubemap_coherent = st.checkbox(
+            tfield(lang, "Wormhole remote cubemap coherent"),
+            value=bool(cfg_seed.get("wormhole_remote_cubemap_coherent", False)),
+            help="Usa campionamento cubemap coerente anche sul lato remoto del wormhole (fix seam forte).",
+        )
+        wormhole_background_continuous_blend = st.checkbox(
+            tfield(lang, "Wormhole continuous background blend"),
+            value=bool(cfg_seed.get("wormhole_background_continuous_blend", False)),
+            help="Sfuma gradualmente lo switch locale/remoto vicino alla gola (r=0).",
+        )
+        wormhole_background_blend_width = st.number_input(
+            tfield(lang, "Wormhole background blend width"),
+            min_value=0.0001,
+            max_value=100.0,
+            value=float(cfg_seed.get("wormhole_background_blend_width", 0.10)),
+            step=0.01,
+            format="%.4f",
+            disabled=(not wormhole_background_continuous_blend),
+        )
 
     video_params: dict[str, Any] = {}
     if mode == "video":
@@ -3067,9 +3365,9 @@ def main() -> None:
             "fov_deg": float(fov_deg),
             "coordinate_system": coordinate_system,
             "metric_model": metric_model,
-            "spin": float(spin),
-            "charge": float(charge),
-            "cosmological_constant": float(cosmological_constant),
+            "spin": (float(spin) if supports_spin else 0.0),
+            "charge": (float(charge) if supports_charge else 0.0),
+            "cosmological_constant": (float(cosmological_constant) if supports_lambda else 0.0),
             "observer_radius": float(observer_radius),
             "observer_inclination_deg": float(observer_inclination_deg),
             "observer_azimuth_deg": float(observer_azimuth_deg),
@@ -3117,6 +3415,7 @@ def main() -> None:
             "compile_rhs": bool(compile_rhs),
             "mixed_precision": bool(mixed_precision),
             "camera_fastpath": bool(camera_fastpath),
+            "atlas_cartesian_variant": bool(atlas_cartesian_variant),
             "roi_supersampling": bool(roi_supersampling),
             "roi_supersample_threshold": float(roi_supersample_threshold),
             "roi_supersample_jitter": float(roi_supersample_jitter),
@@ -3143,6 +3442,16 @@ def main() -> None:
             "hdri_path": hdri_path or None,
             "hdri_exposure": float(hdri_exposure),
             "hdri_rotation_deg": float(hdri_rotation_deg),
+            "wormhole_remote_hdri_path": wormhole_remote_hdri_path or None,
+            "wormhole_remote_hdri_exposure": float(wormhole_remote_hdri_exposure),
+            "wormhole_remote_hdri_rotation_deg": float(wormhole_remote_hdri_rotation_deg),
+            "wormhole_remote_cubemap_coherent": bool(wormhole_remote_cubemap_coherent),
+            "wormhole_background_continuous_blend": bool(wormhole_background_continuous_blend),
+            "wormhole_background_blend_width": float(wormhole_background_blend_width),
+            "wormhole_mt_force_reference_trace": bool(wormhole_mt_force_reference_trace),
+            "wormhole_mt_unwrap_phi": bool(wormhole_mt_unwrap_phi),
+            "wormhole_mt_shortest_arc_phi_interp": bool(wormhole_mt_shortest_arc_phi_interp),
+            "wormhole_mt_sky_sample_from_xyz": bool(wormhole_mt_sky_sample_from_xyz),
             "output": output_path,
         }
     )
@@ -3374,6 +3683,14 @@ def main() -> None:
                 cfg_obj = tuned_cfg
             else:
                 st.warning("Autotune non ha trovato un profilo migliore; mantengo la configurazione corrente.")
+
+    allocated_output, allocated_idx = _reserve_progressive_output_path(
+        workspace_path=workspace_path,
+        requested_output=str(cfg_obj.output),
+    )
+    if allocated_idx is not None:
+        cfg_obj = replace(cfg_obj, output=str(allocated_output))
+        st.caption(f"Output progressivo allocato: `{cfg_obj.output}` (#{allocated_idx:06d})")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg_path = run_dir / f"config_{stamp}.json"

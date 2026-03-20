@@ -104,6 +104,7 @@ EmitterInput = PointEmitter | Sequence[PointEmitter] | None
 
 class KerrRayTracer:
     _cubemap_cache: dict[tuple[object, ...], tuple[torch.Tensor, ...]] = {}
+    _wormhole_remote_cubemap_cache: dict[tuple[object, ...], tuple[torch.Tensor, ...]] = {}
     _hdri_cache: dict[tuple[object, ...], torch.Tensor] = {}
     _nt_page_thorne_cache: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor]] = {}
     _keplerian_omega_cache: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor]] = {}
@@ -150,6 +151,10 @@ class KerrRayTracer:
             self.config.charge,
             self.config.cosmological_constant,
         )
+        self.is_wormhole = self.config.metric_model == "morris_thorne"
+        self.wormhole_throat_radius = float(max(1.0e-6, self.config.wormhole_throat_radius))
+        self.wormhole_length_scale = float(max(1.0e-6, self.config.wormhole_length_scale))
+        self.enable_disk = bool(self.config.enable_accretion_disk and (not self.is_wormhole))
         self.use_mps_optimized_kernel = bool(
             self.config.mps_optimized_kernel
             and self.device.type == "mps"
@@ -172,16 +177,20 @@ class KerrRayTracer:
         self._ks_observer_cache_value: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None
         self.pi = torch.tensor(math.pi, dtype=self.dtype, device=self.device)
         self.equatorial = torch.tensor(math.pi * 0.5, dtype=self.dtype, device=self.device)
-        self.horizon = torch.tensor(
-            event_horizon_radius(
-                self.config.spin,
-                self.config.metric_model,
-                self.config.charge,
-                self.config.cosmological_constant,
-            ),
-            dtype=self.dtype,
-            device=self.device,
-        )
+        self.has_horizon = not self.is_wormhole
+        if self.has_horizon:
+            self.horizon = torch.tensor(
+                event_horizon_radius(
+                    self.config.spin,
+                    self.config.metric_model,
+                    self.config.charge,
+                    self.config.cosmological_constant,
+                ),
+                dtype=self.dtype,
+                device=self.device,
+            )
+        else:
+            self.horizon = torch.tensor(0.0, dtype=self.dtype, device=self.device)
         self._persistent_cache_root: Path | None = None
         if self.config.persistent_cache_enabled:
             try:
@@ -255,6 +264,8 @@ class KerrRayTracer:
                 )
 
         self._hdri_tex: torch.Tensor | None = None
+        self._wormhole_remote_hdri_tex: torch.Tensor | None = None
+        self._wormhole_remote_hdri_file: Path | None = None
         if self.config.background_mode == "hdri" and self.config.hdri_path:
             hdri_file = Path(self.config.hdri_path).expanduser().resolve()
             if not hdri_file.exists():
@@ -276,11 +287,36 @@ class KerrRayTracer:
                 if len(KerrRayTracer._hdri_cache) > 8:
                     KerrRayTracer._hdri_cache.pop(next(iter(KerrRayTracer._hdri_cache)))
             self._hdri_tex = cached_tex
+        if self.is_wormhole and self.config.wormhole_remote_hdri_path:
+            remote_hdri_file = Path(self.config.wormhole_remote_hdri_path).expanduser().resolve()
+            if not remote_hdri_file.exists():
+                raise FileNotFoundError(f"Wormhole remote HDRI file not found: {remote_hdri_file}")
+            self._wormhole_remote_hdri_file = remote_hdri_file
+            st = remote_hdri_file.stat()
+            remote_hdri_key = (
+                str(remote_hdri_file),
+                int(st.st_mtime_ns),
+                int(st.st_size),
+                str(self.device),
+                str(self.dtype),
+            )
+            cached_remote = KerrRayTracer._hdri_cache.get(remote_hdri_key)
+            if cached_remote is None:
+                with Image.open(remote_hdri_file) as hdri_img:
+                    hdri_np = np.asarray(hdri_img.convert("RGB"), dtype=np.float32) / 255.0
+                cached_remote = torch.from_numpy(hdri_np).to(device=self.device, dtype=self.dtype)
+                KerrRayTracer._hdri_cache[remote_hdri_key] = cached_remote
+                if len(KerrRayTracer._hdri_cache) > 8:
+                    KerrRayTracer._hdri_cache.pop(next(iter(KerrRayTracer._hdri_cache)))
+            self._wormhole_remote_hdri_tex = cached_remote
 
         self._cubemap_faces: tuple[torch.Tensor, ...] | None = None
+        self._wormhole_remote_cubemap_faces: tuple[torch.Tensor, ...] | None = None
         if self.config.enable_star_background and self.config.background_projection == "cubemap":
             self._cubemap_faces = self._get_or_build_cubemap()
-        if self.config.disk_model == "physical_nt":
+            if self.is_wormhole and self.config.wormhole_remote_cubemap_coherent:
+                self._wormhole_remote_cubemap_faces = self._get_or_build_wormhole_remote_cubemap()
+        if self.enable_disk and self.config.disk_model == "physical_nt":
             try:
                 rin0 = float(self.config.disk_inner_radius)
                 rout0 = float(self.config.disk_outer_radius)
@@ -296,7 +332,7 @@ class KerrRayTracer:
                 self._disk_omega_lut_main = self._build_keplerian_omega_lut(rin=rin0, rmax=rout0)
             except Exception:
                 self._disk_omega_lut_main = None
-        self._disk_flux_reference = self._compute_disk_flux_reference()
+        self._disk_flux_reference = self._compute_disk_flux_reference() if self.enable_disk else 1.0
 
     def set_observer(
         self,
@@ -537,13 +573,42 @@ class KerrRayTracer:
         theta0_raw = math.radians(self.config.observer_inclination_deg)
         phi0_raw = math.radians(self.config.observer_azimuth_deg)
 
-        # Boyer-Lindquist angular coordinates are singular on the rotation axis.
+        two_pi = 2.0 * math.pi
+        theta0 = math.fmod(theta0_raw, two_pi)
+        if theta0 < 0.0:
+            theta0 += two_pi
+
+        phi0 = phi0_raw
+        if theta0 > math.pi:
+            theta0 = two_pi - theta0
+            phi0 += math.pi
+        phi0 = math.fmod(phi0, two_pi)
+        if phi0 < 0.0:
+            phi0 += two_pi
+
+        # Atlas/cartesian variant: preserve azimuth continuity on the axis.
+        if bool(self.config.atlas_cartesian_variant) and self.config.coordinate_system in {"kerr_schild", "generalized_doran"}:
+            return theta0, phi0
+
+        # Atlas-safe variant for wormhole in Boyer-Lindquist chart:
+        # keep BL regularization on theta (avoid pole singularity),
+        # but preserve normalized azimuth instead of forcing phi=0 at poles.
+        if (
+            bool(self.config.atlas_cartesian_variant)
+            and self.config.coordinate_system == "boyer_lindquist"
+            and self.config.metric_model == "morris_thorne"
+        ):
+            axis_eps = max(8.0 * THETA_EPS, math.radians(0.35))
+            theta_safe = min(max(theta0, axis_eps), math.pi - axis_eps)
+            return theta_safe, phi0
+
+        # Legacy path: Boyer-Lindquist angular coordinates are singular on the rotation axis.
         axis_eps = max(8.0 * THETA_EPS, math.radians(0.35))
-        if theta0_raw <= axis_eps:
+        if theta0 <= axis_eps:
             return axis_eps, 0.0
-        if theta0_raw >= (math.pi - axis_eps):
+        if theta0 >= (math.pi - axis_eps):
             return math.pi - axis_eps, 0.0
-        return theta0_raw, phi0_raw
+        return theta0, phi0
 
     def _camera_grid_1d(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         cfg = self.config
@@ -693,7 +758,16 @@ class KerrRayTracer:
         theta0 = torch.full((h, w), theta0_val, dtype=self.dtype, device=self.device)
         phi0 = torch.full((h, w), phi0_val, dtype=self.dtype, device=self.device)
         t0 = torch.zeros((h, w), dtype=self.dtype, device=self.device)
-        metric = metric_components(r0, theta0, cfg.spin, cfg.metric_model, cfg.charge, cfg.cosmological_constant)
+        metric = metric_components(
+            r0,
+            theta0,
+            cfg.spin,
+            cfg.metric_model,
+            cfg.charge,
+            cfg.cosmological_constant,
+            cfg.wormhole_throat_radius,
+            cfg.wormhole_length_scale,
+        )
 
         omega = -metric.g_tphi / torch.clamp(metric.g_phiphi, min=1.0e-9)
         lapse = torch.sqrt(torch.clamp(-(metric.g_tt - (metric.g_tphi * metric.g_tphi) / torch.clamp(metric.g_phiphi, min=1.0e-9)), min=1.0e-12))
@@ -759,7 +833,16 @@ class KerrRayTracer:
 
         r0_t = torch.as_tensor([cfg.observer_radius], dtype=self.dtype, device=self.device)
         theta0_t = torch.as_tensor([theta0_val], dtype=self.dtype, device=self.device)
-        metric = metric_components(r0_t, theta0_t, cfg.spin, cfg.metric_model, cfg.charge, cfg.cosmological_constant)
+        metric = metric_components(
+            r0_t,
+            theta0_t,
+            cfg.spin,
+            cfg.metric_model,
+            cfg.charge,
+            cfg.cosmological_constant,
+            cfg.wormhole_throat_radius,
+            cfg.wormhole_length_scale,
+        )
         g_tt = metric.g_tt[0]
         g_tphi = metric.g_tphi[0]
         g_rr = metric.g_rr[0]
@@ -1645,7 +1728,10 @@ class KerrRayTracer:
         return torch.stack([x, y, z], dim=-1)
 
     def _rhs(self, state: torch.Tensor) -> torch.Tensor:
-        r = torch.clamp(state[:, 1], min=1.0e-3)
+        if self.is_wormhole:
+            r = state[:, 1]
+        else:
+            r = torch.clamp(state[:, 1], min=1.0e-3)
         theta = torch.clamp(state[:, 2], min=THETA_EPS, max=math.pi - THETA_EPS)
 
         p_t = state[:, 4]
@@ -1660,6 +1746,8 @@ class KerrRayTracer:
             self.config.metric_model,
             self.config.charge,
             self.config.cosmological_constant,
+            self.config.wormhole_throat_radius,
+            self.config.wormhole_length_scale,
         )
         d_r, d_theta = inverse_metric_derivatives(
             r,
@@ -1668,6 +1756,8 @@ class KerrRayTracer:
             self.config.metric_model,
             self.config.charge,
             self.config.cosmological_constant,
+            self.config.wormhole_throat_radius,
+            self.config.wormhole_length_scale,
         )
 
         dt = inv.gtt * p_t + inv.gtphi * p_phi
@@ -1712,8 +1802,49 @@ class KerrRayTracer:
         phi_shift = torch.where(crossed_pole, torch.full_like(theta_raw, math.pi), torch.zeros_like(theta_raw))
 
         state[:, 2] = torch.clamp(theta_fold, min=THETA_EPS, max=math.pi - THETA_EPS)
-        state[:, 3] = torch.remainder(state[:, 3] + phi_shift, two_pi)
+        if self.is_wormhole and bool(self.config.wormhole_mt_unwrap_phi):
+            # Morris-Thorne seam fix: keep phi unwrapped during integration.
+            state[:, 3] = state[:, 3] + phi_shift
+        else:
+            state[:, 3] = torch.remainder(state[:, 3] + phi_shift, two_pi)
         state[:, 6] = torch.where(crossed_pole, -state[:, 6], state[:, 6])
+        return state
+
+    def _mt_shortest_arc_enabled(self) -> bool:
+        return bool(self.is_wormhole and self.config.wormhole_mt_shortest_arc_phi_interp)
+
+    def _interp_phi_shortest_arc(
+        self,
+        phi0: torch.Tensor,
+        phi1: torch.Tensor,
+        alpha: torch.Tensor,
+    ) -> torch.Tensor:
+        two_pi = torch.as_tensor(2.0 * math.pi, dtype=self.dtype, device=self.device)
+        pi = torch.as_tensor(math.pi, dtype=self.dtype, device=self.device)
+        dphi = torch.remainder((phi1 - phi0) + pi, two_pi) - pi
+        return phi0 + alpha * dphi
+
+    def _sky_angles_from_state(self, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.is_wormhole and bool(self.config.wormhole_mt_sky_sample_from_xyz):
+            sky_xyz = self._bl_to_cartesian(state[:, 1], state[:, 2], state[:, 3])
+            sky_norm = torch.clamp(torch.linalg.norm(sky_xyz, dim=-1), min=1.0e-8)
+            sky_theta = torch.acos(torch.clamp(sky_xyz[:, 2] / sky_norm, min=-1.0, max=1.0))
+            sky_theta = torch.clamp(sky_theta, min=THETA_EPS, max=math.pi - THETA_EPS)
+            sky_phi = torch.remainder(torch.atan2(sky_xyz[:, 1], sky_xyz[:, 0]), 2.0 * self.pi)
+            sky_side = state[:, 1]
+            return sky_theta, sky_phi, sky_side
+
+        sky_theta = torch.clamp(state[:, 2], min=THETA_EPS, max=math.pi - THETA_EPS)
+        sky_phi = torch.remainder(state[:, 3], 2.0 * self.pi)
+        sky_side = state[:, 1]
+        return sky_theta, sky_phi, sky_side
+
+    def _apply_radial_domain(self, state: torch.Tensor) -> torch.Tensor:
+        # Kerr/Schwarzschild families use r > 0.
+        # Morris-Thorne uses signed proper radial coordinate and must allow r < 0.
+        if self.is_wormhole:
+            return state
+        state[:, 1] = torch.clamp(state[:, 1], min=1.0e-3)
         return state
 
     def _rk4_step(self, state: torch.Tensor, h: float) -> torch.Tensor:
@@ -1722,7 +1853,7 @@ class KerrRayTracer:
         k3 = self._rhs_fn(state + 0.5 * h * k2)
         k4 = self._rhs_fn(state + h * k3)
         nxt = state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-        nxt[:, 1] = torch.clamp(nxt[:, 1], min=1.0e-3)
+        nxt = self._apply_radial_domain(nxt)
         return self._regularize_angular_state(nxt)
 
     def _rk4_step_with_k1(self, state: torch.Tensor, h: float) -> tuple[torch.Tensor, torch.Tensor]:
@@ -1731,7 +1862,7 @@ class KerrRayTracer:
         k3 = self._rhs_fn(state + 0.5 * h * k2)
         k4 = self._rhs_fn(state + h * k3)
         nxt = state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-        nxt[:, 1] = torch.clamp(nxt[:, 1], min=1.0e-3)
+        nxt = self._apply_radial_domain(nxt)
         return self._regularize_angular_state(nxt), k1
 
     def _event_aware_step_factor_bl(
@@ -1844,7 +1975,7 @@ class KerrRayTracer:
         scale = torch.clamp(scale, min=1.0e-12)
         err_ratio = torch.sqrt(torch.mean(torch.square(err / scale), dim=-1))
 
-        y5[:, 1] = torch.clamp(y5[:, 1], min=1.0e-3)
+        y5 = self._apply_radial_domain(y5)
         y5 = self._regularize_angular_state(y5)
 
         finite = torch.isfinite(y5).all(dim=-1) & torch.isfinite(err_ratio)
@@ -1937,7 +2068,7 @@ class KerrRayTracer:
         scale = torch.clamp(scale, min=1.0e-12)
         err_ratio = torch.sqrt(torch.mean(torch.square(err / scale), dim=-1))
 
-        y5[:, 1] = torch.clamp(y5[:, 1], min=1.0e-3)
+        y5 = self._apply_radial_domain(y5)
         y5 = self._regularize_angular_state(y5)
 
         finite = torch.isfinite(y5).all(dim=-1) & torch.isfinite(err_ratio)
@@ -2375,6 +2506,8 @@ class KerrRayTracer:
                 self.config.metric_model,
                 self.config.charge,
                 self.config.cosmological_constant,
+                self.config.wormhole_throat_radius,
+                self.config.wormhole_length_scale,
             )
         gtt = metric.g_tt
         gtphi = metric.g_tphi
@@ -2519,6 +2652,8 @@ class KerrRayTracer:
             self.config.metric_model,
             self.config.charge,
             self.config.cosmological_constant,
+            self.config.wormhole_throat_radius,
+            self.config.wormhole_length_scale,
         )
         gtt = metric.g_tt
         gtphi = metric.g_tphi
@@ -2873,14 +3008,33 @@ class KerrRayTracer:
         return sky + fine_stars + giant_stars
 
     def _sample_sky_equirect(self, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
+        return self._sample_sky_equirect_custom(
+            theta,
+            phi,
+            texture=self._hdri_tex,
+            exposure=float(self.config.hdri_exposure),
+            rotation_deg=float(self.config.hdri_rotation_deg),
+        )
+
+    def _sample_sky_equirect_custom(
+        self,
+        theta: torch.Tensor,
+        phi: torch.Tensor,
+        *,
+        texture: torch.Tensor | None,
+        exposure: float,
+        rotation_deg: float,
+    ) -> torch.Tensor:
         cfg = self.config
-        if cfg.background_mode == "hdri" and self._hdri_tex is not None:
+        if texture is not None:
             two_pi = 2.0 * self.pi
             meridian_rot = torch.as_tensor(math.radians(cfg.background_meridian_offset_deg), dtype=self.dtype, device=self.device)
-            rot = torch.as_tensor(math.radians(cfg.hdri_rotation_deg), dtype=self.dtype, device=self.device) + meridian_rot
+            rot = torch.as_tensor(math.radians(rotation_deg), dtype=self.dtype, device=self.device) + meridian_rot
             u = torch.remainder(phi + rot, two_pi) / two_pi
             v = torch.clamp(theta / self.pi, min=0.0, max=1.0)
-            return self._sample_equirectangular(self._hdri_tex, u, v) * cfg.hdri_exposure
+            return self._sample_equirectangular(texture, u, v) * float(exposure)
+        if cfg.background_mode == "hdri":
+            return torch.zeros((theta.shape[0], 3), dtype=self.dtype, device=self.device)
         return self._sample_procedural_equirect(theta, phi)
 
     def _build_cubemap_faces(self, face_size: int) -> tuple[torch.Tensor, ...]:
@@ -2890,6 +3044,29 @@ class KerrRayTracer:
             theta = torch.acos(torch.clamp(dirs[:, 2], min=-1.0, max=1.0))
             phi = torch.atan2(dirs[:, 1], dirs[:, 0])
             face = self._sample_sky_equirect(theta, phi).reshape(face_size, face_size, 3).contiguous()
+            faces.append(face)
+        return tuple(faces)
+
+    def _build_cubemap_faces_custom(
+        self,
+        face_size: int,
+        *,
+        texture: torch.Tensor | None,
+        exposure: float,
+        rotation_deg: float,
+    ) -> tuple[torch.Tensor, ...]:
+        faces: list[torch.Tensor] = []
+        for face_idx in range(6):
+            dirs = self._cube_face_dirs(face_idx, face_size).reshape(-1, 3)
+            theta = torch.acos(torch.clamp(dirs[:, 2], min=-1.0, max=1.0))
+            phi = torch.atan2(dirs[:, 1], dirs[:, 0])
+            face = self._sample_sky_equirect_custom(
+                theta,
+                phi,
+                texture=texture,
+                exposure=exposure,
+                rotation_deg=rotation_deg,
+            ).reshape(face_size, face_size, 3).contiguous()
             faces.append(face)
         return tuple(faces)
 
@@ -2910,14 +3087,63 @@ class KerrRayTracer:
             KerrRayTracer._cubemap_cache.pop(next(iter(KerrRayTracer._cubemap_cache)))
         return built
 
-    def _sample_cubemap_faces(self, face: torch.Tensor, s: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        if self._cubemap_faces is None:
+    def _get_or_build_wormhole_remote_cubemap(self) -> tuple[torch.Tensor, ...] | None:
+        if self._wormhole_remote_hdri_tex is None:
+            return None
+        if self._wormhole_remote_hdri_file is None:
+            return None
+        try:
+            st = self._wormhole_remote_hdri_file.stat()
+            key = (
+                "wormhole_remote_hdri",
+                str(self._wormhole_remote_hdri_file),
+                int(st.st_mtime_ns),
+                int(st.st_size),
+                int(self.config.cubemap_face_size),
+                float(self.config.wormhole_remote_hdri_exposure),
+                float(self.config.wormhole_remote_hdri_rotation_deg),
+                float(self.config.background_meridian_offset_deg),
+                self.device.type,
+                str(self.dtype),
+            )
+        except Exception:
+            key = (
+                "wormhole_remote_hdri",
+                int(self.config.cubemap_face_size),
+                float(self.config.wormhole_remote_hdri_exposure),
+                float(self.config.wormhole_remote_hdri_rotation_deg),
+                float(self.config.background_meridian_offset_deg),
+                self.device.type,
+                str(self.dtype),
+            )
+        cached = KerrRayTracer._wormhole_remote_cubemap_cache.get(key)
+        if cached is not None:
+            return cached
+        built = self._build_cubemap_faces_custom(
+            int(self.config.cubemap_face_size),
+            texture=self._wormhole_remote_hdri_tex,
+            exposure=float(self.config.wormhole_remote_hdri_exposure),
+            rotation_deg=float(self.config.wormhole_remote_hdri_rotation_deg),
+        )
+        KerrRayTracer._wormhole_remote_cubemap_cache[key] = built
+        if len(KerrRayTracer._wormhole_remote_cubemap_cache) > 8:
+            KerrRayTracer._wormhole_remote_cubemap_cache.pop(next(iter(KerrRayTracer._wormhole_remote_cubemap_cache)))
+        return built
+
+    def _sample_cubemap_faces_from(
+        self,
+        faces: tuple[torch.Tensor, ...],
+        face: torch.Tensor,
+        s: torch.Tensor,
+        t: torch.Tensor,
+    ) -> torch.Tensor:
+        if faces is None:
             raise RuntimeError("Cubemap sampler requested without cubemap data")
 
         u = torch.clamp(0.5 * (s + 1.0), min=0.0, max=1.0)
         v = torch.clamp(0.5 * (1.0 - t), min=0.0, max=1.0)
         out = torch.zeros((face.shape[0], 3), dtype=self.dtype, device=self.device)
-        for face_idx, tex in enumerate(self._cubemap_faces):
+        for face_idx, tex in enumerate(faces):
             mask = face == face_idx
             if not bool(mask.any()):
                 continue
@@ -2942,8 +3168,9 @@ class KerrRayTracer:
             out[mask] = c0 * (1.0 - ty) + c1 * ty
         return out
 
-    def _sample_cubemap(self, dirs: torch.Tensor) -> torch.Tensor:
-        if self._cubemap_faces is None:
+    def _sample_cubemap(self, dirs: torch.Tensor, faces: tuple[torch.Tensor, ...] | None = None) -> torch.Tensor:
+        faces_eff = self._cubemap_faces if faces is None else faces
+        if faces_eff is None:
             theta = torch.acos(torch.clamp(dirs[:, 2], min=-1.0, max=1.0))
             phi = torch.atan2(dirs[:, 1], dirs[:, 0])
             return self._sample_sky_equirect(theta, phi)
@@ -2964,17 +3191,17 @@ class KerrRayTracer:
         face_x = torch.where(x >= 0.0, base_face, torch.ones_like(base_face))
         sx = torch.where(x >= 0.0, -z / safe_ax, z / safe_ax)
         tx = y / safe_ax
-        col_x = self._sample_cubemap_faces(face_x, sx, tx)
+        col_x = self._sample_cubemap_faces_from(faces_eff, face_x, sx, tx)
 
         face_y = torch.where(y >= 0.0, torch.full_like(face_x, 2), torch.full_like(face_x, 3))
         sy = x / safe_ay
         ty = torch.where(y >= 0.0, -z / safe_ay, z / safe_ay)
-        col_y = self._sample_cubemap_faces(face_y, sy, ty)
+        col_y = self._sample_cubemap_faces_from(faces_eff, face_y, sy, ty)
 
         face_z = torch.where(z >= 0.0, torch.full_like(face_x, 4), torch.full_like(face_x, 5))
         sz = torch.where(z >= 0.0, x / safe_az, -x / safe_az)
         tz = y / safe_az
-        col_z = self._sample_cubemap_faces(face_z, sz, tz)
+        col_z = self._sample_cubemap_faces_from(faces_eff, face_z, sz, tz)
 
         # Seamless cubemap blend near face boundaries.
         sharpness = 16.0
@@ -3023,15 +3250,58 @@ class KerrRayTracer:
         s_major = torch.where(nz, -x / safe_az, s_major)
         t_major = torch.where(nz, y / safe_az, t_major)
 
-        fallback = self._sample_cubemap_faces(face_major, s_major, t_major)
+        fallback = self._sample_cubemap_faces_from(faces_eff, face_major, s_major, t_major)
         use_blend = (wx + wy + wz) > 1.0e-8
         return torch.where(use_blend, blended, fallback)
 
-    def _star_background(self, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
+    def _star_background(
+        self,
+        theta: torch.Tensor,
+        phi: torch.Tensor,
+        side_sign: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        dirs = None
         if self.config.background_projection == "cubemap":
             dirs = self._spherical_to_dirs(theta, phi)
-            return self._sample_cubemap(dirs)
-        return self._sample_sky_equirect(theta, phi)
+            local = self._sample_cubemap(dirs)
+        else:
+            local = self._sample_sky_equirect(theta, phi)
+
+        if (not self.is_wormhole) or side_sign is None:
+            return local
+
+        if (
+            self.config.background_projection == "cubemap"
+            and bool(self.config.wormhole_remote_cubemap_coherent)
+            and (self._wormhole_remote_cubemap_faces is not None)
+            and (dirs is not None)
+        ):
+            remote = self._sample_cubemap(dirs, faces=self._wormhole_remote_cubemap_faces)
+        else:
+            remote = self._sample_sky_equirect_custom(
+                theta,
+                phi,
+                texture=self._wormhole_remote_hdri_tex,
+                exposure=float(self.config.wormhole_remote_hdri_exposure),
+                rotation_deg=float(self.config.wormhole_remote_hdri_rotation_deg),
+            )
+        if bool(self.config.wormhole_background_continuous_blend):
+            blend_w = torch.as_tensor(
+                max(1.0e-6, float(self.config.wormhole_background_blend_width)),
+                dtype=self.dtype,
+                device=self.device,
+            )
+            # Smooth local<->remote transition around the throat (r=0).
+            remote_w = 0.5 * (1.0 - torch.tanh(side_sign / blend_w))
+            remote_w = torch.clamp(remote_w, min=0.0, max=1.0)
+            if remote_w.ndim == 1:
+                remote_w = remote_w.unsqueeze(-1)
+            return local * (1.0 - remote_w) + remote * remote_w
+
+        remote_mask = side_sign < 0.0
+        if remote_mask.ndim == 1:
+            remote_mask = remote_mask.unsqueeze(-1)
+        return torch.where(remote_mask, remote, local)
 
     def _trace(
         self,
@@ -3105,7 +3375,12 @@ class KerrRayTracer:
                 device=self.device,
             )
 
-        horizon_cut = self.horizon * 1.0005
+        has_horizon = self.has_horizon
+        horizon_cut = (
+            self.horizon * 1.0005
+            if has_horizon
+            else torch.as_tensor(-1.0e30, dtype=self.dtype, device=self.device)
+        )
         ray_step = torch.full((n,), float(cfg.step_size), dtype=self.dtype, device=self.device)
         if cfg.adaptive_integrator:
             ray_step = torch.clamp(ray_step, min=cfg.adaptive_step_min, max=cfg.adaptive_step_max)
@@ -3316,6 +3591,8 @@ class KerrRayTracer:
                 & (r_cross <= cfg.disk_outer_radius)
                 & (r_cross > horizon_cut)
             )
+            if not self.enable_disk:
+                valid_disk = torch.zeros_like(valid_disk)
             order_local = disk_cross_count[idx] + valid_disk.to(dtype=disk_cross_count.dtype)
             if cfg.multi_hit_disk:
                 order_local = torch.clamp(order_local, min=0, max=int(cfg.max_disk_crossings))
@@ -3369,24 +3646,35 @@ class KerrRayTracer:
                     particle_local = particle_local | local_hit
                 alpha_particle = torch.where(particle_local, alpha_best, alpha_particle)
 
-            horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
-            horizon_local = horizon_cross & (~valid_disk)
+            if has_horizon:
+                horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
+                horizon_local = horizon_cross & (~valid_disk)
+            else:
+                horizon_local = torch.zeros_like(valid_disk)
 
             escape_r = torch.as_tensor(cfg.escape_radius, dtype=self.dtype, device=self.device)
-            escape_cross = ((prev_r < escape_r) & (next_r >= escape_r)) | (next_r >= escape_r)
+            if self.is_wormhole:
+                prev_abs = torch.abs(prev_r)
+                next_abs = torch.abs(next_r)
+                escape_cross = ((prev_abs < escape_r) & (next_abs >= escape_r)) | (next_abs >= escape_r)
+            else:
+                escape_cross = ((prev_r < escape_r) & (next_r >= escape_r)) | (next_r >= escape_r)
             escape_local = escape_cross & (~valid_disk) & (~horizon_local)
 
             alpha_disk_eff = torch.where(valid_disk, alpha_disk, torch.full_like(prev_r, 2.0))
 
-            alpha_h = self._refine_event_alpha(
-                prev_r,
-                next_r,
-                deriv_prev[:, 1],
-                deriv_next[:, 1],
-                step_used,
-                horizon_cut,
-            )
-            alpha_h_eff = torch.where(horizon_local, alpha_h, torch.full_like(prev_r, 2.0))
+            if has_horizon:
+                alpha_h = self._refine_event_alpha(
+                    prev_r,
+                    next_r,
+                    deriv_prev[:, 1],
+                    deriv_next[:, 1],
+                    step_used,
+                    horizon_cut,
+                )
+                alpha_h_eff = torch.where(horizon_local, alpha_h, torch.full_like(prev_r, 2.0))
+            else:
+                alpha_h_eff = torch.full_like(prev_r, 2.0)
 
             alpha_e = self._refine_event_alpha(
                 prev_r,
@@ -3455,14 +3743,21 @@ class KerrRayTracer:
                 step_used,
                 alpha_disk,
             )
-            phi_cross = self._hermite_interp(
-                prev_state[:, 3],
-                next_state[:, 3],
-                deriv_prev[:, 3],
-                deriv_next[:, 3],
-                step_used,
-                alpha_disk,
-            )
+            if self._mt_shortest_arc_enabled():
+                phi_cross = self._interp_phi_shortest_arc(
+                    prev_state[:, 3],
+                    next_state[:, 3],
+                    alpha_disk,
+                )
+            else:
+                phi_cross = self._hermite_interp(
+                    prev_state[:, 3],
+                    next_state[:, 3],
+                    deriv_prev[:, 3],
+                    deriv_next[:, 3],
+                    step_used,
+                    alpha_disk,
+                )
 
             p_t_part = self._hermite_interp(
                 prev_state[:, 4],
@@ -3531,15 +3826,14 @@ class KerrRayTracer:
         if bool(active.any()):
             escaped[active] = True
 
-        if cfg.enforce_black_hole_shadow:
+        if cfg.enforce_black_hole_shadow and self.has_horizon:
             absorb_cut = horizon_cut * cfg.shadow_absorb_radius_factor
             captured = (r_min <= absorb_cut) & (~hit_disk) & (~hit_emitter)
             if bool(captured.any()):
                 hit_horizon[captured] = True
                 escaped[captured] = False
 
-        sky_theta = torch.clamp(state[:, 2], min=THETA_EPS, max=math.pi - THETA_EPS)
-        sky_phi = torch.remainder(state[:, 3], 2.0 * self.pi)
+        sky_theta, sky_phi, sky_side = self._sky_angles_from_state(state)
         return (
             hit_disk,
             hit_emitter,
@@ -3559,6 +3853,7 @@ class KerrRayTracer:
             p_phi_particle,
             sky_theta,
             sky_phi,
+            sky_side,
             steps_used,
         )
 
@@ -3640,7 +3935,12 @@ class KerrRayTracer:
                 device=self.device,
             )
 
-        horizon_cut = self.horizon * 1.0005
+        has_horizon = self.has_horizon
+        horizon_cut = (
+            self.horizon * 1.0005
+            if has_horizon
+            else torch.as_tensor(-1.0e30, dtype=self.dtype, device=self.device)
+        )
         ray_step = torch.full((n,), float(cfg.step_size), dtype=self.dtype, device=self.device)
         if cfg.adaptive_integrator:
             ray_step = torch.clamp(ray_step, min=cfg.adaptive_step_min, max=cfg.adaptive_step_max)
@@ -3852,6 +4152,8 @@ class KerrRayTracer:
                 & (r_cross <= cfg.disk_outer_radius)
                 & (r_cross > horizon_cut)
             )
+            if not self.enable_disk:
+                valid_disk = torch.zeros_like(valid_disk)
             order_local = disk_cross_count[idx] + valid_disk.to(dtype=disk_cross_count.dtype)
             if cfg.multi_hit_disk:
                 order_local = torch.clamp(order_local, min=0, max=int(cfg.max_disk_crossings))
@@ -3878,20 +4180,31 @@ class KerrRayTracer:
                     particle_local = particle_local | local_hit
                 alpha_particle = torch.where(particle_local, alpha_best, alpha_particle)
 
-            horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
-            horizon_local = horizon_cross & (~valid_disk)
-            escape_cross = ((prev_r < escape_r) & (next_r >= escape_r)) | (next_r >= escape_r)
+            if has_horizon:
+                horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
+                horizon_local = horizon_cross & (~valid_disk)
+            else:
+                horizon_local = torch.zeros_like(valid_disk)
+            if self.is_wormhole:
+                prev_abs = torch.abs(prev_r)
+                next_abs = torch.abs(next_r)
+                escape_cross = ((prev_abs < escape_r) & (next_abs >= escape_r)) | (next_abs >= escape_r)
+            else:
+                escape_cross = ((prev_r < escape_r) & (next_r >= escape_r)) | (next_r >= escape_r)
             escape_local = escape_cross & (~valid_disk) & (~horizon_local)
 
             alpha_disk_eff = torch.where(valid_disk, alpha_disk, torch.full_like(prev_r, 2.0))
-            denom_h = prev_r - next_r
-            alpha_h = torch.where(
-                torch.abs(denom_h) > 1.0e-9,
-                (prev_r - horizon_cut) / denom_h,
-                torch.zeros_like(prev_r),
-            )
-            alpha_h = torch.clamp(alpha_h, min=0.0, max=1.0)
-            alpha_h_eff = torch.where(horizon_local, alpha_h, torch.full_like(prev_r, 2.0))
+            if has_horizon:
+                denom_h = prev_r - next_r
+                alpha_h = torch.where(
+                    torch.abs(denom_h) > 1.0e-9,
+                    (prev_r - horizon_cut) / denom_h,
+                    torch.zeros_like(prev_r),
+                )
+                alpha_h = torch.clamp(alpha_h, min=0.0, max=1.0)
+                alpha_h_eff = torch.where(horizon_local, alpha_h, torch.full_like(prev_r, 2.0))
+            else:
+                alpha_h_eff = torch.full_like(prev_r, 2.0)
 
             denom_e = next_r - prev_r
             alpha_e = torch.where(
@@ -3981,7 +4294,7 @@ class KerrRayTracer:
         if bool(active.any()):
             escaped[active] = True
 
-        if cfg.enforce_black_hole_shadow:
+        if cfg.enforce_black_hole_shadow and self.has_horizon:
             absorb_cut = horizon_cut * cfg.shadow_absorb_radius_factor
             captured = (r_min <= absorb_cut) & (~hit_disk) & (~hit_emitter)
             if bool(captured.any()):
@@ -3993,6 +4306,7 @@ class KerrRayTracer:
         sky_theta = torch.acos(torch.clamp(sky_xyz[:, 2] / sky_norm, min=-1.0, max=1.0))
         sky_theta = torch.clamp(sky_theta, min=THETA_EPS, max=math.pi - THETA_EPS)
         sky_phi = torch.remainder(torch.atan2(sky_xyz[:, 1], sky_xyz[:, 0]), 2.0 * self.pi)
+        sky_side = torch.ones_like(sky_phi)
         return (
             hit_disk,
             hit_emitter,
@@ -4012,6 +4326,7 @@ class KerrRayTracer:
             p_phi_particle,
             sky_theta,
             sky_phi,
+            sky_side,
             steps_used,
         )
 
@@ -4087,7 +4402,12 @@ class KerrRayTracer:
                 device=self.device,
             )
 
-        horizon_cut = self.horizon * 1.0005
+        has_horizon = self.has_horizon
+        horizon_cut = (
+            self.horizon * 1.0005
+            if has_horizon
+            else torch.as_tensor(-1.0e30, dtype=self.dtype, device=self.device)
+        )
         step_h = float(cfg.step_size)
         touch_eps = torch.as_tensor(2.0e-4, dtype=self.dtype, device=self.device)
         escape_r = torch.as_tensor(cfg.escape_radius, dtype=self.dtype, device=self.device)
@@ -4220,6 +4540,8 @@ class KerrRayTracer:
                 & (r_cross <= cfg.disk_outer_radius)
                 & (r_cross > horizon_cut)
             )
+            if not self.enable_disk:
+                valid_disk = torch.zeros_like(valid_disk)
             order_local = disk_cross_count[idx] + valid_disk.to(dtype=disk_cross_count.dtype)
             if cfg.multi_hit_disk:
                 order_local = torch.clamp(order_local, min=0, max=int(cfg.max_disk_crossings))
@@ -4246,8 +4568,16 @@ class KerrRayTracer:
                     particle_local = particle_local | local_hit
                 alpha_particle = torch.where(particle_local, alpha_best, alpha_particle)
 
-            horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
-            escape_cross = ((prev_r < escape_r) & (next_r >= escape_r)) | (next_r >= escape_r)
+            if has_horizon:
+                horizon_cross = ((prev_r > horizon_cut) & (next_r <= horizon_cut)) | (next_r <= horizon_cut)
+            else:
+                horizon_cross = torch.zeros_like(valid_disk)
+            if self.is_wormhole:
+                prev_abs = torch.abs(prev_r)
+                next_abs = torch.abs(next_r)
+                escape_cross = ((prev_abs < escape_r) & (next_abs >= escape_r)) | (next_abs >= escape_r)
+            else:
+                escape_cross = ((prev_r < escape_r) & (next_r >= escape_r)) | (next_r >= escape_r)
 
             alpha_disk_eff = torch.where(valid_disk, alpha_disk, torch.full_like(prev_r, 2.0))
             alpha_h = torch.clamp((prev_r - horizon_cut) / torch.clamp(prev_r - next_r, min=1.0e-9), min=0.0, max=1.0)
@@ -4284,7 +4614,14 @@ class KerrRayTracer:
             p_theta_interp = prev_state[:, 6] + event_alpha * (next_state[:, 6] - prev_state[:, 6])
             p_phi_interp = prev_state[:, 7] + event_alpha * (next_state[:, 7] - prev_state[:, 7])
             t_interp = prev_state[:, 0] + event_alpha * (next_state[:, 0] - prev_state[:, 0])
-            phi_interp = prev_state[:, 3] + event_alpha * (next_state[:, 3] - prev_state[:, 3])
+            if self._mt_shortest_arc_enabled():
+                phi_interp = self._interp_phi_shortest_arc(
+                    prev_state[:, 3],
+                    next_state[:, 3],
+                    event_alpha,
+                )
+            else:
+                phi_interp = prev_state[:, 3] + event_alpha * (next_state[:, 3] - prev_state[:, 3])
             r_interp = prev_state[:, 1] + event_alpha * (next_state[:, 1] - prev_state[:, 1])
 
             sel_particle = event_code == 1
@@ -4322,15 +4659,14 @@ class KerrRayTracer:
         if bool(active.any()):
             escaped[active] = True
 
-        if cfg.enforce_black_hole_shadow:
+        if cfg.enforce_black_hole_shadow and self.has_horizon:
             absorb_cut = horizon_cut * cfg.shadow_absorb_radius_factor
             captured = (r_min <= absorb_cut) & (~hit_disk) & (~hit_emitter)
             if bool(captured.any()):
                 hit_horizon[captured] = True
                 escaped[captured] = False
 
-        sky_theta = torch.clamp(state[:, 2], min=THETA_EPS, max=math.pi - THETA_EPS)
-        sky_phi = torch.remainder(state[:, 3], 2.0 * self.pi)
+        sky_theta, sky_phi, sky_side = self._sky_angles_from_state(state)
         return (
             hit_disk,
             hit_emitter,
@@ -4350,6 +4686,7 @@ class KerrRayTracer:
             p_phi_particle,
             sky_theta,
             sky_phi,
+            sky_side,
             steps_used,
         )
 
@@ -4373,6 +4710,7 @@ class KerrRayTracer:
         p_phi_particle: torch.Tensor,
         sky_theta: torch.Tensor,
         sky_phi: torch.Tensor,
+        sky_side: torch.Tensor,
         emitter: EmitterInput = None,
     ) -> torch.Tensor:
         cfg = self.config
@@ -4386,7 +4724,11 @@ class KerrRayTracer:
         if bool(escaped.any()):
             escaped_idx = torch.nonzero(escaped, as_tuple=False).squeeze(-1)
             if cfg.enable_star_background:
-                rgb[escaped_idx] = self._star_background(sky_theta[escaped_idx], sky_phi[escaped_idx])
+                rgb[escaped_idx] = self._star_background(
+                    sky_theta[escaped_idx],
+                    sky_phi[escaped_idx],
+                    side_sign=sky_side[escaped_idx],
+                )
             else:
                 sky = torch.tensor([0.012, 0.018, 0.030], dtype=self.dtype, device=self.device)
                 rgb[escaped_idx] = sky
@@ -4477,6 +4819,8 @@ class KerrRayTracer:
                 cfg.metric_model,
                 cfg.charge,
                 cfg.cosmological_constant,
+                cfg.wormhole_throat_radius,
+                cfg.wormhole_length_scale,
             )
 
             omega = self._disk_keplerian_omega(r_profile)
@@ -4953,7 +5297,9 @@ class KerrRayTracer:
         if self.config.coordinate_system in {"kerr_schild", "generalized_doran"}:
             trace_fn = self._trace_kerr_schild
         else:
-            if emitter_payload is not None:
+            if self.is_wormhole and bool(self.config.wormhole_mt_force_reference_trace):
+                trace_fn = self._trace
+            elif emitter_payload is not None:
                 if self.use_mps_optimized_kernel and self.config.allow_mps_emitter_fastpath:
                     trace_fn = self._trace_mps_optimized
                 else:
