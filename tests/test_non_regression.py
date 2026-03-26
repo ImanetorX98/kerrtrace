@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+import torch
 
 from kerrtrace.animation import render_animation
 from kerrtrace.config import RenderConfig
@@ -113,6 +114,45 @@ class NonRegressionTests(unittest.TestCase):
             self.assertEqual(stats.frames, 3)
             produced = sorted(frames_dir.glob("frame_*.png"))
             self.assertEqual(len(produced), 3)
+
+    def test_disk_diffrot_helpers_validate_and_shape(self) -> None:
+        cfg = RenderConfig(
+            width=64,
+            height=64,
+            coordinate_system="boyer_lindquist",
+            metric_model="kerr",
+            spin=0.9,
+            observer_radius=30.0,
+            observer_inclination_deg=75.0,
+            disk_outer_radius=9.0,
+            enable_disk_differential_rotation=True,
+            disk_diffrot_model="keplerian_metric",
+            disk_diffrot_visual_mode="hybrid",
+            disk_diffrot_strength=1.5,
+            disk_diffrot_seed=11,
+            disk_diffrot_iteration="v3_robust",
+            adaptive_integrator=False,
+            max_steps=80,
+            step_size=0.25,
+            device="cpu",
+            dtype="float32",
+            show_progress_bar=False,
+        ).validated()
+        tracer = KerrRayTracer(cfg)
+        r = torch.tensor([6.0, 8.0, 10.0], dtype=tracer.dtype, device=tracer.device)
+        omega = tracer._disk_diffrot_omega(r)
+        phase, gain = tracer._disk_diffrot_phase_terms(
+            torch.zeros_like(r),
+            torch.tensor([0.0, 1.0, 2.0], dtype=tracer.dtype, device=tracer.device),
+            torch.tensor([0.2, 0.5, 0.8], dtype=tracer.dtype, device=tracer.device),
+        )
+
+        self.assertEqual(tuple(omega.shape), (3,))
+        self.assertEqual(tuple(phase.shape), (3,))
+        self.assertEqual(tuple(gain.shape), (3,))
+        self.assertTrue(torch.isfinite(omega).all().item())
+        self.assertTrue(torch.isfinite(phase).all().item())
+        self.assertTrue(torch.isfinite(gain).all().item())
 
 
 if __name__ == "__main__":

@@ -116,8 +116,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--star-density", type=float)
     parser.add_argument("--star-brightness", type=float)
     parser.add_argument("--star-seed", type=int)
-    parser.add_argument("--background-mode", choices=["procedural", "hdri"])
-    parser.add_argument("--background-projection", choices=["cubemap", "equirectangular"])
+    parser.add_argument("--background-mode", choices=["procedural", "hdri", "darkspace"])
+    parser.add_argument("--background-projection", choices=["cubemap", "equirectangular", "darkspace"])
     parser.add_argument("--cubemap-face-size", type=int)
     parser.add_argument("--hdri-path", type=str)
     parser.add_argument("--hdri-exposure", type=float)
@@ -160,6 +160,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disk-layer-accident-strength", type=float)
     parser.add_argument("--disk-layer-accident-count", type=float)
     parser.add_argument("--disk-layer-accident-sharpness", type=float)
+    parser.add_argument("--enable-disk-differential-rotation", action="store_true")
+    parser.add_argument("--disable-disk-differential-rotation", action="store_true")
+    parser.add_argument("--disk-diffrot-model", choices=["keplerian_lut", "keplerian_metric"])
+    parser.add_argument("--disk-diffrot-visual-mode", choices=["layer_phase", "annular_tiles", "hybrid"])
+    parser.add_argument("--disk-diffrot-strength", type=float)
+    parser.add_argument("--disk-diffrot-seed", type=int)
+    parser.add_argument("--disk-diffrot-iteration", choices=["v1_basic", "v2_visibility", "v3_robust"])
     parser.add_argument("--enable-adaptive-disk-stratification", action="store_true")
     parser.add_argument("--disable-adaptive-disk-stratification", action="store_true")
     parser.add_argument("--disk-adaptive-layers-min", type=int)
@@ -516,6 +523,11 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "disk_layer_accident_strength": args.disk_layer_accident_strength,
         "disk_layer_accident_count": args.disk_layer_accident_count,
         "disk_layer_accident_sharpness": args.disk_layer_accident_sharpness,
+        "disk_diffrot_model": args.disk_diffrot_model,
+        "disk_diffrot_visual_mode": args.disk_diffrot_visual_mode,
+        "disk_diffrot_strength": args.disk_diffrot_strength,
+        "disk_diffrot_seed": args.disk_diffrot_seed,
+        "disk_diffrot_iteration": args.disk_diffrot_iteration,
         "disk_adaptive_layers_min": args.disk_adaptive_layers_min,
         "disk_adaptive_layers_max": args.disk_adaptive_layers_max,
         "disk_adaptive_complexity_mix": args.disk_adaptive_complexity_mix,
@@ -643,6 +655,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["disk_layered_palette"] = True
     if args.disable_disk_layered_palette:
         updates["disk_layered_palette"] = False
+    if args.enable_disk_differential_rotation:
+        updates["enable_disk_differential_rotation"] = True
+    if args.disable_disk_differential_rotation:
+        updates["enable_disk_differential_rotation"] = False
     if args.enable_adaptive_disk_stratification:
         updates["disk_adaptive_stratification"] = True
     if args.disable_adaptive_disk_stratification:

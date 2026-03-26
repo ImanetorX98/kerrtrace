@@ -58,8 +58,11 @@ CHOICE_FIELDS: dict[str, list[str]] = {
     "disk_model": ["physical_nt", "legacy"],
     "disk_radial_profile": ["nt_proxy", "nt_page_thorne"],
     "disk_palette": ["default", "interstellar_warm"],
-    "background_mode": ["procedural", "hdri"],
-    "background_projection": ["cubemap", "equirectangular"],
+    "disk_diffrot_model": ["keplerian_lut", "keplerian_metric"],
+    "disk_diffrot_visual_mode": ["layer_phase", "annular_tiles", "hybrid"],
+    "disk_diffrot_iteration": ["v1_basic", "v2_visibility", "v3_robust"],
+    "background_mode": ["procedural", "hdri", "darkspace"],
+    "background_projection": ["cubemap", "equirectangular", "darkspace"],
     "kerr_schild_mode": ["off", "fsal_only", "analytic"],
     "device": ["auto", "cpu", "cuda", "mps"],
     "dtype": ["float32", "float64"],
@@ -110,6 +113,12 @@ PRESET_CRITICAL_FIELDS: list[str] = [
     "observer_inclination_deg",
     "disk_inner_radius",
     "disk_outer_radius",
+    "enable_disk_differential_rotation",
+    "disk_diffrot_model",
+    "disk_diffrot_visual_mode",
+    "disk_diffrot_strength",
+    "disk_diffrot_seed",
+    "disk_diffrot_iteration",
     "step_size",
     "max_steps",
     "device",
@@ -490,6 +499,13 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Enable layered disk": "Abilita disco stratificato",
         "Layer count": "Numero strati",
         "Layer mix": "Mix strati",
+        "Differential rotation": "Rotazione differenziale",
+        "Enable differential disk rotation": "Abilita rotazione differenziale del disco",
+        "Differential rotation model": "Modello rotazione differenziale",
+        "Differential rotation visual mode": "Modalita' visiva rotazione differenziale",
+        "Differential rotation strength": "Intensita' rotazione differenziale",
+        "Differential rotation seed": "Seed rotazione differenziale",
+        "Differential rotation iteration": "Iterazione rotazione differenziale",
         "Max steps": "Max step",
         "Step size": "Dimensione step",
         "Adaptive integrator": "Integratore adattivo",
@@ -1091,6 +1107,9 @@ def _run_command_live(
     last_frame_t: float | None = None
     row_sec_per_unit: deque[float] = deque(maxlen=12)
     frame_sec_per_unit: deque[float] = deque(maxlen=12)
+    launch_t = time.perf_counter()
+    last_heartbeat_t = launch_t
+    saw_any_output = False
 
     def _push(text: str) -> None:
         chunks.append(text)
@@ -1101,9 +1120,10 @@ def _run_command_live(
         log_placeholder.code(joined, language="bash")
 
     def _process_line(line: str, from_carriage: bool) -> None:
-        nonlocal last_progress_key, last_frame_key, seen_frame_progress, last_row_t, last_frame_t
+        nonlocal last_progress_key, last_frame_key, seen_frame_progress, last_row_t, last_frame_t, saw_any_output
         if not line:
             return
+        saw_any_output = True
         stripped = line.strip()
         frame_match = frame_line_re.search(stripped)
         if frame_match:
@@ -1131,9 +1151,13 @@ def _run_command_live(
                 eta_f = avg * float(total_f - done_f)
             if progress_widget is not None and total_f > 0 and key_f != last_frame_key:
                 ratio = max(0.0, min(1.0, float(done_f) / float(total_f)))
+                elapsed_s = max(0.0, time.perf_counter() - launch_t)
                 progress_widget.progress(
                     ratio,
-                    text=f"Frames: {done_f}/{total_f} ({ratio * 100.0:.1f}%) ETA ~{_format_eta_short(eta_f)}",
+                    text=(
+                        f"Frames: {done_f}/{total_f} ({ratio * 100.0:.1f}%) "
+                        f"ETA ~{_format_eta_short(eta_f)} | Elapsed { _format_eta_short(elapsed_s) }"
+                    ),
                 )
             if key_f != last_frame_key and frame_preview_placeholder is not None:
                 raw_path = frame_match.group(3).strip().strip("'").strip('"')
@@ -1179,9 +1203,13 @@ def _run_command_live(
                     eta_s = avg * float(key[1] - key[0])
                 if (not seen_frame_progress) and progress_widget is not None and key[1] > 0:
                     ratio = max(0.0, min(1.0, float(key[0]) / float(key[1])))
+                    elapsed_s = max(0.0, time.perf_counter() - launch_t)
                     progress_widget.progress(
                         ratio,
-                        text=f"Render rows: {key[0]}/{key[1]} ({ratio * 100.0:.1f}%) ETA ~{_format_eta_short(eta_s)}",
+                        text=(
+                            f"Render rows: {key[0]}/{key[1]} ({ratio * 100.0:.1f}%) "
+                            f"ETA ~{_format_eta_short(eta_s)} | Elapsed { _format_eta_short(elapsed_s) }"
+                        ),
                     )
             _push(stripped + "\n")
             return
@@ -1217,6 +1245,23 @@ def _run_command_live(
                     if data:
                         txt = data.decode("utf-8", errors="replace")
                         _process_chunk_text(txt)
+                now = time.perf_counter()
+                # Keep UI responsive during warmup/compilation phases before first frame/row log.
+                if (
+                    progress_widget is not None
+                    and (not seen_frame_progress)
+                    and (last_progress_key is None)
+                    and proc.poll() is None
+                    and (now - last_heartbeat_t) >= 1.5
+                ):
+                    elapsed = int(max(0.0, now - launch_t))
+                    msg = (
+                        f"Render avviato: attendo i primi log... {elapsed}s"
+                        if (not saw_any_output)
+                        else f"Render in preparazione... {elapsed}s"
+                    )
+                    progress_widget.progress(0.0, text=msg)
+                    last_heartbeat_t = now
                 if proc.poll() is not None:
                     if not ready:
                         break
@@ -1244,16 +1289,18 @@ def _run_command_live(
         if seen_frame_progress and last_frame_key is not None and last_frame_key[1] > 0:
             done, total = last_frame_key
             ratio = max(0.0, min(1.0, float(done) / float(total)))
+            elapsed_s = max(0.0, time.perf_counter() - launch_t)
             progress_widget.progress(
                 ratio,
-                text=f"Frames: {done}/{total} ({ratio * 100.0:.1f}%)",
+                text=f"Frames: {done}/{total} ({ratio * 100.0:.1f}%) | Elapsed { _format_eta_short(elapsed_s) }",
             )
         elif last_progress_key is not None and last_progress_key[1] > 0:
             done, total = last_progress_key
             ratio = max(0.0, min(1.0, float(done) / float(total)))
+            elapsed_s = max(0.0, time.perf_counter() - launch_t)
             progress_widget.progress(
                 ratio,
-                text=f"Render rows: {done}/{total} ({ratio * 100.0:.1f}%)",
+                text=f"Render rows: {done}/{total} ({ratio * 100.0:.1f}%) | Elapsed { _format_eta_short(elapsed_s) }",
             )
 
     return rc, "".join(chunks)
@@ -2070,6 +2117,8 @@ div[data-testid="stTextInput"] input:disabled {
         st.session_state["job_history"] = []
     if "job_counter" not in st.session_state:
         st.session_state["job_counter"] = 0
+    if "bg_launch_notice" not in st.session_state:
+        st.session_state["bg_launch_notice"] = ""
     if "preset_loaded_cfg" not in st.session_state:
         st.session_state["preset_loaded_cfg"] = {}
     if "preset_lock_active" not in st.session_state:
@@ -2080,6 +2129,10 @@ div[data-testid="stTextInput"] input:disabled {
         st.session_state["preset_locked_fields"] = []
     if "preset_loaded_name" not in st.session_state:
         st.session_state["preset_loaded_name"] = ""
+    launch_notice = str(st.session_state.get("bg_launch_notice") or "").strip()
+    if launch_notice:
+        st.success(launch_notice)
+        st.session_state["bg_launch_notice"] = ""
     last_output_raw = str(st.session_state.get("last_output_path") or "").strip()
     if last_output_raw:
         last_output = Path(last_output_raw)
@@ -2185,6 +2238,14 @@ div[data-testid="stTextInput"] input:disabled {
         workspace_async = Path(str(async_meta.get("workspace", str(Path.cwd()))))
         out_hint = Path(str(async_meta.get("output_hint", "out/webui_frame.png")))
         started_at = str(async_meta.get("started_at", ""))
+        elapsed_bg_s: float | None = None
+        try:
+            if started_at:
+                started_dt = datetime.strptime(started_at, "%Y%m%d_%H%M%S")
+                elapsed_bg_s = max(0.0, (datetime.now() - started_dt).total_seconds())
+        except Exception:
+            elapsed_bg_s = None
+        elapsed_bg_txt = _format_eta_short(elapsed_bg_s) if elapsed_bg_s is not None else "--:--"
         cfg_async = str(async_meta.get("cfg_path", ""))
         rc = async_proc.poll()
         running = rc is None
@@ -2192,7 +2253,7 @@ div[data-testid="stTextInput"] input:disabled {
             if running:
                 st.info(
                     f"{tr(lang, 'job_running', 'In esecuzione')} (PID {getattr(async_proc, 'pid', 'n/a')}) "
-                    f"- started: {started_at}"
+                    f"- started: {started_at} - elapsed: {elapsed_bg_txt}"
                 )
             else:
                 if int(rc) == 0:
@@ -2345,6 +2406,18 @@ div[data-testid="stTextInput"] input:disabled {
     cfg_seed.setdefault("disk_layer_accident_sharpness", float(default_cfg.get("disk_layer_accident_sharpness", 7.0)))
     cfg_seed.setdefault("disk_layer_global_phase", float(default_cfg.get("disk_layer_global_phase", 0.0)))
     cfg_seed.setdefault("disk_layer_phase_rate_hz", float(default_cfg.get("disk_layer_phase_rate_hz", 0.35)))
+    cfg_seed.setdefault(
+        "enable_disk_differential_rotation",
+        bool(default_cfg.get("enable_disk_differential_rotation", False)),
+    )
+    cfg_seed.setdefault("disk_diffrot_model", str(default_cfg.get("disk_diffrot_model", "keplerian_lut")))
+    cfg_seed.setdefault(
+        "disk_diffrot_visual_mode",
+        str(default_cfg.get("disk_diffrot_visual_mode", "layer_phase")),
+    )
+    cfg_seed.setdefault("disk_diffrot_strength", float(default_cfg.get("disk_diffrot_strength", 1.0)))
+    cfg_seed.setdefault("disk_diffrot_seed", int(default_cfg.get("disk_diffrot_seed", 7)))
+    cfg_seed.setdefault("disk_diffrot_iteration", str(default_cfg.get("disk_diffrot_iteration", "v1_basic")))
     cfg_seed.setdefault("roi_supersampling", bool(default_cfg.get("roi_supersampling", False)))
     cfg_seed.setdefault("roi_supersample_threshold", float(default_cfg.get("roi_supersample_threshold", 0.92)))
     cfg_seed.setdefault("roi_supersample_jitter", float(default_cfg.get("roi_supersample_jitter", 0.35)))
@@ -2447,13 +2520,54 @@ div[data-testid="stTextInput"] input:disabled {
     current_wh = (int(cfg_seed["width"]), int(cfg_seed["height"]))
     preset_labels = ["Custom"] + list(QUALITY_PRESETS.keys())
     default_preset = reverse_quality.get(current_wh, "Custom")
-    preset = st.selectbox(tr(lang, "quality_preset", "Preset qualità"), options=preset_labels, index=preset_labels.index(default_preset))
+    q_preset, q_w, q_h = st.columns([2.4, 1.0, 1.0])
+    with q_preset:
+        preset = st.selectbox(
+            tr(lang, "quality_preset", "Preset qualità"),
+            options=preset_labels,
+            index=preset_labels.index(default_preset),
+        )
     if preset == "Custom":
-        width = st.number_input(tfield(lang, "Width"), min_value=64, max_value=5000, value=int(cfg_seed["width"]), step=1)
-        height = st.number_input(tfield(lang, "Height"), min_value=64, max_value=5000, value=int(cfg_seed["height"]), step=1)
+        with q_w:
+            width = st.number_input(
+                tfield(lang, "Width"),
+                min_value=64,
+                max_value=5000,
+                value=int(cfg_seed["width"]),
+                step=1,
+                key="quality_width_custom",
+            )
+        with q_h:
+            height = st.number_input(
+                tfield(lang, "Height"),
+                min_value=64,
+                max_value=5000,
+                value=int(cfg_seed["height"]),
+                step=1,
+                key="quality_height_custom",
+            )
     else:
         width, height = QUALITY_PRESETS[preset]
-        st.info(f"{tr(lang, 'resolution_set', 'Risoluzione impostata a')} {width}x{height}")
+        with q_w:
+            st.number_input(
+                tfield(lang, "Width"),
+                min_value=64,
+                max_value=5000,
+                value=int(width),
+                step=1,
+                disabled=True,
+                key="quality_width_preset",
+            )
+        with q_h:
+            st.number_input(
+                tfield(lang, "Height"),
+                min_value=64,
+                max_value=5000,
+                value=int(height),
+                step=1,
+                disabled=True,
+                key="quality_height_preset",
+            )
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -2621,125 +2735,192 @@ div[data-testid="stTextInput"] input:disabled {
             tfield(lang, "Enable layered disk"),
             value=bool(cfg_seed.get("disk_layered_palette", False)),
         )
-        disk_layer_count = st.number_input(
-            tfield(lang, "Layer count"),
-            min_value=2,
-            max_value=512,
-            value=int(cfg_seed.get("disk_layer_count", 12)),
-            step=1,
-            disabled=(not disk_layered_palette),
+        with st.expander("Opzioni disco stratificato", expanded=bool(disk_layered_palette)):
+            disk_layer_count = st.number_input(
+                tfield(lang, "Layer count"),
+                min_value=2,
+                max_value=512,
+                value=int(cfg_seed.get("disk_layer_count", 12)),
+                step=1,
+                disabled=(not disk_layered_palette),
+            )
+            disk_layer_mix = st.slider(
+                tfield(lang, "Layer mix"),
+                min_value=0.0,
+                max_value=1.0,
+                value=float(cfg_seed.get("disk_layer_mix", 0.55)),
+                step=0.01,
+                disabled=(not disk_layered_palette),
+            )
+            disk_layer_accident_strength = st.number_input(
+                tfield(lang, "Layer accident strength"),
+                min_value=0.0,
+                max_value=4.0,
+                value=float(cfg_seed.get("disk_layer_accident_strength", 0.42)),
+                step=0.05,
+                disabled=(not disk_layered_palette),
+            )
+            disk_layer_accident_count = st.number_input(
+                tfield(lang, "Layer accident count"),
+                min_value=0.0,
+                max_value=128.0,
+                value=float(cfg_seed.get("disk_layer_accident_count", 3.8)),
+                step=0.1,
+                disabled=(not disk_layered_palette),
+            )
+            disk_layer_accident_sharpness = st.number_input(
+                tfield(lang, "Layer accident sharpness"),
+                min_value=1.0,
+                max_value=32.0,
+                value=float(cfg_seed.get("disk_layer_accident_sharpness", 7.0)),
+                step=0.5,
+                disabled=(not disk_layered_palette),
+            )
+            disk_layer_global_phase = st.number_input(
+                tfield(lang, "Layer global phase"),
+                value=float(cfg_seed.get("disk_layer_global_phase", 0.0)),
+                step=0.1,
+                disabled=(not disk_layered_palette),
+            )
+            disk_layer_phase_rate_hz = st.number_input(
+                tfield(lang, "Layer phase rate (Hz)"),
+                min_value=0.0,
+                max_value=64.0,
+                value=float(cfg_seed.get("disk_layer_phase_rate_hz", 0.35)),
+                step=0.05,
+                disabled=(not disk_layered_palette),
+            )
+        st.markdown(f"**{tfield(lang, 'Differential rotation')}**")
+        disk_diffrot_enabled = st.checkbox(
+            tfield(lang, "Enable differential disk rotation"),
+            value=bool(cfg_seed.get("enable_disk_differential_rotation", False)),
         )
-        disk_layer_mix = st.slider(
-            tfield(lang, "Layer mix"),
-            min_value=0.0,
-            max_value=1.0,
-            value=float(cfg_seed.get("disk_layer_mix", 0.55)),
-            step=0.01,
-            disabled=(not disk_layered_palette),
-        )
-        disk_layer_accident_strength = st.number_input(
-            tfield(lang, "Layer accident strength"),
-            min_value=0.0,
-            max_value=4.0,
-            value=float(cfg_seed.get("disk_layer_accident_strength", 0.42)),
-            step=0.05,
-            disabled=(not disk_layered_palette),
-        )
-        disk_layer_accident_count = st.number_input(
-            tfield(lang, "Layer accident count"),
-            min_value=0.0,
-            max_value=128.0,
-            value=float(cfg_seed.get("disk_layer_accident_count", 3.8)),
-            step=0.1,
-            disabled=(not disk_layered_palette),
-        )
-        disk_layer_accident_sharpness = st.number_input(
-            tfield(lang, "Layer accident sharpness"),
-            min_value=1.0,
-            max_value=32.0,
-            value=float(cfg_seed.get("disk_layer_accident_sharpness", 7.0)),
-            step=0.5,
-            disabled=(not disk_layered_palette),
-        )
-        disk_layer_global_phase = st.number_input(
-            tfield(lang, "Layer global phase"),
-            value=float(cfg_seed.get("disk_layer_global_phase", 0.0)),
-            step=0.1,
-            disabled=(not disk_layered_palette),
-        )
-        disk_layer_phase_rate_hz = st.number_input(
-            tfield(lang, "Layer phase rate (Hz)"),
-            min_value=0.0,
-            max_value=64.0,
-            value=float(cfg_seed.get("disk_layer_phase_rate_hz", 0.35)),
-            step=0.05,
-            disabled=(not disk_layered_palette),
-        )
-        disk_adaptive_stratification = st.checkbox(
-            tfield(lang, "Adaptive disk stratification"),
-            value=bool(cfg_seed.get("disk_adaptive_stratification", False)),
-            disabled=(not disk_layered_palette),
-        )
-        disk_adaptive_layers_min = st.number_input(
-            tfield(lang, "Adaptive layers min"),
-            min_value=2,
-            max_value=1024,
-            value=int(cfg_seed.get("disk_adaptive_layers_min", 8)),
-            step=1,
-            disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
-        )
-        disk_adaptive_layers_max = st.number_input(
-            tfield(lang, "Adaptive layers max"),
-            min_value=2,
-            max_value=2048,
-            value=int(cfg_seed.get("disk_adaptive_layers_max", 48)),
-            step=1,
-            disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
-        )
-        disk_adaptive_complexity_mix = st.slider(
-            tfield(lang, "Adaptive complexity mix"),
-            min_value=0.0,
-            max_value=1.0,
-            value=float(cfg_seed.get("disk_adaptive_complexity_mix", 0.65)),
-            step=0.01,
-            disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
-        )
+        diffrot_model_labels = {
+            "keplerian_lut": "Keplerian LUT",
+            "keplerian_metric": "Keplerian metric",
+        }
+        diffrot_visual_labels = {
+            "layer_phase": "Layer phase",
+            "annular_tiles": "Annular tiles",
+            "hybrid": "Hybrid",
+        }
+        diffrot_iteration_labels = {
+            "v1_basic": "v1 basic",
+            "v2_visibility": "v2 visibility",
+            "v3_robust": "v3 robust",
+        }
+        with st.expander("Opzioni rotazione differenziale", expanded=bool(disk_diffrot_enabled)):
+            disk_diffrot_model = st.selectbox(
+                tfield(lang, "Differential rotation model"),
+                options=CHOICE_FIELDS["disk_diffrot_model"],
+                index=CHOICE_FIELDS["disk_diffrot_model"].index(
+                    _safe_choice(CHOICE_FIELDS["disk_diffrot_model"], str(cfg_seed.get("disk_diffrot_model", "keplerian_lut")))
+                ),
+                format_func=lambda key: diffrot_model_labels.get(key, key),
+                disabled=(not disk_diffrot_enabled),
+            )
+            disk_diffrot_visual_mode = st.selectbox(
+                tfield(lang, "Differential rotation visual mode"),
+                options=CHOICE_FIELDS["disk_diffrot_visual_mode"],
+                index=CHOICE_FIELDS["disk_diffrot_visual_mode"].index(
+                    _safe_choice(
+                        CHOICE_FIELDS["disk_diffrot_visual_mode"],
+                        str(cfg_seed.get("disk_diffrot_visual_mode", "layer_phase")),
+                    )
+                ),
+                format_func=lambda key: diffrot_visual_labels.get(key, key),
+                disabled=(not disk_diffrot_enabled),
+            )
+            disk_diffrot_iteration = st.selectbox(
+                tfield(lang, "Differential rotation iteration"),
+                options=CHOICE_FIELDS["disk_diffrot_iteration"],
+                index=CHOICE_FIELDS["disk_diffrot_iteration"].index(
+                    _safe_choice(CHOICE_FIELDS["disk_diffrot_iteration"], str(cfg_seed.get("disk_diffrot_iteration", "v1_basic")))
+                ),
+                format_func=lambda key: diffrot_iteration_labels.get(key, key),
+                disabled=(not disk_diffrot_enabled),
+            )
+            disk_diffrot_strength = st.slider(
+                tfield(lang, "Differential rotation strength"),
+                min_value=0.0,
+                max_value=3.0,
+                value=float(cfg_seed.get("disk_diffrot_strength", 1.0)),
+                step=0.01,
+                disabled=(not disk_diffrot_enabled),
+            )
+            disk_diffrot_seed = st.number_input(
+                tfield(lang, "Differential rotation seed"),
+                min_value=0,
+                value=int(cfg_seed.get("disk_diffrot_seed", 7)),
+                step=1,
+                disabled=(not disk_diffrot_enabled),
+            )
+            disk_adaptive_stratification = st.checkbox(
+                tfield(lang, "Adaptive disk stratification"),
+                value=bool(cfg_seed.get("disk_adaptive_stratification", False)),
+                disabled=(not disk_layered_palette),
+            )
+            disk_adaptive_layers_min = st.number_input(
+                tfield(lang, "Adaptive layers min"),
+                min_value=2,
+                max_value=1024,
+                value=int(cfg_seed.get("disk_adaptive_layers_min", 8)),
+                step=1,
+                disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
+            )
+            disk_adaptive_layers_max = st.number_input(
+                tfield(lang, "Adaptive layers max"),
+                min_value=2,
+                max_value=2048,
+                value=int(cfg_seed.get("disk_adaptive_layers_max", 48)),
+                step=1,
+                disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
+            )
+            disk_adaptive_complexity_mix = st.slider(
+                tfield(lang, "Adaptive complexity mix"),
+                min_value=0.0,
+                max_value=1.0,
+                value=float(cfg_seed.get("disk_adaptive_complexity_mix", 0.65)),
+                step=0.01,
+                disabled=(not (disk_layered_palette and disk_adaptive_stratification)),
+            )
         disk_volume_emission = st.checkbox(
             tfield(lang, "Continuous disk volume emission"),
             value=bool(cfg_seed.get("disk_volume_emission", False)),
         )
-        disk_volume_samples = st.number_input(
-            tfield(lang, "Disk volume samples"),
-            min_value=1,
-            max_value=64,
-            value=int(cfg_seed.get("disk_volume_samples", 5)),
-            step=1,
-            disabled=(not disk_volume_emission),
-        )
-        disk_volume_density_scale = st.number_input(
-            tfield(lang, "Disk volume density scale"),
-            min_value=0.0,
-            max_value=1000.0,
-            value=float(cfg_seed.get("disk_volume_density_scale", 1.0)),
-            step=0.05,
-            disabled=(not disk_volume_emission),
-        )
-        disk_volume_temperature_drop = st.slider(
-            tfield(lang, "Disk volume temperature drop"),
-            min_value=0.0,
-            max_value=1.0,
-            value=float(cfg_seed.get("disk_volume_temperature_drop", 0.28)),
-            step=0.01,
-            disabled=(not disk_volume_emission),
-        )
-        disk_volume_strength = st.number_input(
-            tfield(lang, "Disk volume strength"),
-            min_value=0.0,
-            max_value=10.0,
-            value=float(cfg_seed.get("disk_volume_strength", 0.85)),
-            step=0.05,
-            disabled=(not disk_volume_emission),
-        )
+        with st.expander("Opzioni volume emission", expanded=bool(disk_volume_emission)):
+            disk_volume_samples = st.number_input(
+                tfield(lang, "Disk volume samples"),
+                min_value=1,
+                max_value=64,
+                value=int(cfg_seed.get("disk_volume_samples", 5)),
+                step=1,
+                disabled=(not disk_volume_emission),
+            )
+            disk_volume_density_scale = st.number_input(
+                tfield(lang, "Disk volume density scale"),
+                min_value=0.0,
+                max_value=1000.0,
+                value=float(cfg_seed.get("disk_volume_density_scale", 1.0)),
+                step=0.05,
+                disabled=(not disk_volume_emission),
+            )
+            disk_volume_temperature_drop = st.slider(
+                tfield(lang, "Disk volume temperature drop"),
+                min_value=0.0,
+                max_value=1.0,
+                value=float(cfg_seed.get("disk_volume_temperature_drop", 0.28)),
+                step=0.01,
+                disabled=(not disk_volume_emission),
+            )
+            disk_volume_strength = st.number_input(
+                tfield(lang, "Disk volume strength"),
+                min_value=0.0,
+                max_value=10.0,
+                value=float(cfg_seed.get("disk_volume_strength", 0.85)),
+                step=0.05,
+                disabled=(not disk_volume_emission),
+            )
     with d2:
         max_steps = st.number_input(tfield(lang, "Max steps"), min_value=16, value=int(cfg_seed["max_steps"]), step=10)
         step_size = st.number_input(tfield(lang, "Step size"), min_value=0.001, value=float(cfg_seed["step_size"]), step=0.01)
@@ -2784,230 +2965,247 @@ div[data-testid="stTextInput"] input:disabled {
             help=tfield(lang, "manual: custom bar; tqdm: tqdm bar; auto: use tqdm when available"),
         )
     with d4:
-        mps_optimized_kernel = st.checkbox(tfield(lang, "MPS optimized kernel"), value=bool(cfg_seed["mps_optimized_kernel"]))
-        mps_auto_chunking = st.checkbox(tfield(lang, "MPS auto chunking"), value=bool(cfg_seed.get("mps_auto_chunking", True)))
-        compile_rhs = st.checkbox(tfield(lang, "Compile RHS"), value=bool(cfg_seed["compile_rhs"]))
-        mixed_precision = st.checkbox(tfield(lang, "Mixed precision"), value=bool(cfg_seed["mixed_precision"]))
-        camera_fastpath = st.checkbox(tfield(lang, "Camera fastpath"), value=bool(cfg_seed["camera_fastpath"]))
-        atlas_cartesian_variant = st.checkbox(
-            tfield(lang, "Atlas/cartesian camera variant"),
-            value=bool(cfg_seed.get("atlas_cartesian_variant", False)),
-            help="Per coordinate Kerr-Schild/Generalized-Doran: preserva la continuita' azimutale vicino ai poli.",
-        )
+        with st.expander("Kernel & camera", expanded=False):
+            mps_optimized_kernel = st.checkbox(tfield(lang, "MPS optimized kernel"), value=bool(cfg_seed["mps_optimized_kernel"]))
+            mps_auto_chunking = st.checkbox(tfield(lang, "MPS auto chunking"), value=bool(cfg_seed.get("mps_auto_chunking", True)))
+            compile_rhs = st.checkbox(tfield(lang, "Compile RHS"), value=bool(cfg_seed["compile_rhs"]))
+            mixed_precision = st.checkbox(tfield(lang, "Mixed precision"), value=bool(cfg_seed["mixed_precision"]))
+            camera_fastpath = st.checkbox(tfield(lang, "Camera fastpath"), value=bool(cfg_seed["camera_fastpath"]))
+            atlas_cartesian_variant = st.checkbox(
+                tfield(lang, "Atlas/cartesian camera variant"),
+                value=bool(cfg_seed.get("atlas_cartesian_variant", False)),
+                help="Per coordinate Kerr-Schild/Generalized-Doran: preserva la continuita' azimutale vicino ai poli.",
+            )
+
         mt_metric_active = metric_model == "morris_thorne"
-        wormhole_mt_force_reference_trace = st.checkbox(
-            "Morris-Thorne: force robust tracer",
-            value=bool(cfg_seed.get("wormhole_mt_force_reference_trace", False)),
-            disabled=(not mt_metric_active),
-            help="Disattiva il fast path MPS e usa il tracer robusto (_trace) per ridurre seam/artefatti.",
-        )
-        wormhole_mt_unwrap_phi = st.checkbox(
-            "Morris-Thorne: phi unwrapped",
-            value=bool(cfg_seed.get("wormhole_mt_unwrap_phi", False)),
-            disabled=(not mt_metric_active),
-            help="Mantiene phi non wrapped durante l'integrazione geodetica.",
-        )
-        wormhole_mt_shortest_arc_phi_interp = st.checkbox(
-            "Morris-Thorne: shortest-arc phi interpolation",
-            value=bool(cfg_seed.get("wormhole_mt_shortest_arc_phi_interp", False)),
-            disabled=(not mt_metric_active),
-            help="Interpolazione angolare robusta vicino al branch cut.",
-        )
-        wormhole_mt_sky_sample_from_xyz = st.checkbox(
-            "Morris-Thorne: sky sample from XYZ",
-            value=bool(cfg_seed.get("wormhole_mt_sky_sample_from_xyz", False)),
-            disabled=(not mt_metric_active),
-            help="Ricava gli angoli sky da direzioni cartesiane finali (meno sensibile alle seam di phi).",
-        )
-        roi_supersampling = st.checkbox(
-            tfield(lang, "ROI supersampling"),
-            value=bool(cfg_seed.get("roi_supersampling", False)),
-        )
-        roi_supersample_threshold = st.number_input(
-            tfield(lang, "ROI threshold"),
-            min_value=0.50,
-            max_value=0.999,
-            value=float(cfg_seed.get("roi_supersample_threshold", 0.92)),
-            step=0.01,
-            format="%.3f",
-            disabled=(not roi_supersampling),
-        )
-        roi_supersample_jitter = st.number_input(
-            tfield(lang, "ROI jitter"),
-            min_value=0.01,
-            max_value=1.00,
-            value=float(cfg_seed.get("roi_supersample_jitter", 0.35)),
-            step=0.01,
-            format="%.2f",
-            disabled=(not roi_supersampling),
-        )
-        roi_supersample_samples = st.number_input(
-            tfield(lang, "ROI samples"),
-            min_value=1,
-            max_value=8,
-            value=int(cfg_seed.get("roi_supersample_samples", 2)),
-            step=1,
-            disabled=(not roi_supersampling),
-        )
-        persistent_cache_enabled = st.checkbox(
-            tfield(lang, "Persistent cache"),
-            value=bool(cfg_seed.get("persistent_cache_enabled", True)),
-        )
-        persistent_cache_dir = st.text_input(
-            tfield(lang, "Persistent cache dir"),
-            value=str(cfg_seed.get("persistent_cache_dir", "out/cache")),
-            disabled=(not persistent_cache_enabled),
-        )
-        quality_lock = st.checkbox(
-            tfield(lang, "Quality lock"),
-            value=bool(cfg_seed.get("quality_lock", False)),
-        )
-        quality_lock_psnr_min = st.number_input(
-            tfield(lang, "Quality lock PSNR min"),
-            min_value=1.0,
-            max_value=120.0,
-            value=float(cfg_seed.get("quality_lock_psnr_min", 45.0)),
-            step=0.5,
-            disabled=(not quality_lock),
-        )
-        quality_lock_ssim_min = st.number_input(
-            tfield(lang, "Quality lock SSIM min"),
-            min_value=0.10,
-            max_value=1.0,
-            value=float(cfg_seed.get("quality_lock_ssim_min", 0.985)),
-            step=0.001,
-            format="%.3f",
-            disabled=(not quality_lock),
-        )
-        quality_lock_sample_width = st.number_input(
-            tfield(lang, "Quality lock sample width"),
-            min_value=64,
-            max_value=int(width),
-            value=min(int(width), int(cfg_seed.get("quality_lock_sample_width", 256))),
-            step=8,
-            disabled=(not quality_lock),
-        )
-        quality_lock_sample_height = st.number_input(
-            tfield(lang, "Quality lock sample height"),
-            min_value=64,
-            max_value=int(height),
-            value=min(int(height), int(cfg_seed.get("quality_lock_sample_height", 144))),
-            step=8,
-            disabled=(not quality_lock),
-        )
-        quality_lock_fallback_to_baseline = st.checkbox(
-            tfield(lang, "Quality lock fallback"),
-            value=bool(cfg_seed.get("quality_lock_fallback_to_baseline", True)),
-            disabled=(not quality_lock),
-        )
-        animation_workers = st.number_input(
-            tfield(lang, "Animation workers"),
-            min_value=1,
-            max_value=32,
-            value=int(cfg_seed.get("animation_workers", 1)),
-            step=1,
-        )
-        stream_encode_async = st.checkbox(
-            tfield(lang, "Stream encode async"),
-            value=bool(cfg_seed.get("stream_encode_async", True)),
-        )
-        stream_encode_queue_size = st.number_input(
-            tfield(lang, "Stream encode queue"),
-            min_value=1,
-            max_value=64,
-            value=int(cfg_seed.get("stream_encode_queue_size", 4)),
-            step=1,
-            disabled=(not stream_encode_async),
-        )
-        adaptive_spatial_sampling = bool(cfg_seed.get("adaptive_spatial_sampling", False))
-        adaptive_spatial_preview_steps = int(cfg_seed.get("adaptive_spatial_preview_steps", 96))
-        adaptive_spatial_min_scale = float(cfg_seed.get("adaptive_spatial_min_scale", 0.65))
-        adaptive_spatial_quantile = float(cfg_seed.get("adaptive_spatial_quantile", 0.78))
-        if supports_adaptive_spatial:
-            adaptive_spatial_sampling = st.checkbox(
-                tfield(lang, "Adaptive spatial sampling"),
-                value=adaptive_spatial_sampling,
+        mt_any_enabled = any(
+            bool(cfg_seed.get(k, False))
+            for k in (
+                "wormhole_mt_force_reference_trace",
+                "wormhole_mt_unwrap_phi",
+                "wormhole_mt_shortest_arc_phi_interp",
+                "wormhole_mt_sky_sample_from_xyz",
             )
-            adaptive_spatial_preview_steps = st.number_input(
-                tfield(lang, "Adaptive preview steps"),
-                min_value=16,
-                max_value=10000,
-                value=adaptive_spatial_preview_steps,
-                step=8,
+        )
+        with st.expander("Morris-Thorne seam fixes", expanded=bool(mt_metric_active and mt_any_enabled)):
+            wormhole_mt_force_reference_trace = st.checkbox(
+                "Morris-Thorne: force robust tracer",
+                value=bool(cfg_seed.get("wormhole_mt_force_reference_trace", False)),
+                disabled=(not mt_metric_active),
+                help="Disattiva il fast path MPS e usa il tracer robusto (_trace) per ridurre seam/artefatti.",
             )
-            adaptive_spatial_min_scale = st.number_input(
-                tfield(lang, "Adaptive min scale"),
-                min_value=0.10,
-                max_value=1.00,
-                value=adaptive_spatial_min_scale,
-                step=0.05,
+            wormhole_mt_unwrap_phi = st.checkbox(
+                "Morris-Thorne: phi unwrapped",
+                value=bool(cfg_seed.get("wormhole_mt_unwrap_phi", False)),
+                disabled=(not mt_metric_active),
+                help="Mantiene phi non wrapped durante l'integrazione geodetica.",
             )
-            adaptive_spatial_quantile = st.number_input(
-                tfield(lang, "Adaptive quantile"),
+            wormhole_mt_shortest_arc_phi_interp = st.checkbox(
+                "Morris-Thorne: shortest-arc phi interpolation",
+                value=bool(cfg_seed.get("wormhole_mt_shortest_arc_phi_interp", False)),
+                disabled=(not mt_metric_active),
+                help="Interpolazione angolare robusta vicino al branch cut.",
+            )
+            wormhole_mt_sky_sample_from_xyz = st.checkbox(
+                "Morris-Thorne: sky sample from XYZ",
+                value=bool(cfg_seed.get("wormhole_mt_sky_sample_from_xyz", False)),
+                disabled=(not mt_metric_active),
+                help="Ricava gli angoli sky da direzioni cartesiane finali (meno sensibile alle seam di phi).",
+            )
+
+        roi_expanded = bool(cfg_seed.get("roi_supersampling", False) or cfg_seed.get("quality_lock", False))
+        with st.expander("ROI, quality & cache", expanded=roi_expanded):
+            roi_supersampling = st.checkbox(
+                tfield(lang, "ROI supersampling"),
+                value=bool(cfg_seed.get("roi_supersampling", False)),
+            )
+            roi_supersample_threshold = st.number_input(
+                tfield(lang, "ROI threshold"),
                 min_value=0.50,
-                max_value=0.995,
-                value=adaptive_spatial_quantile,
+                max_value=0.999,
+                value=float(cfg_seed.get("roi_supersample_threshold", 0.92)),
                 step=0.01,
                 format="%.3f",
+                disabled=(not roi_supersampling),
             )
-        render_tile_rows = st.number_input(
-            tfield(lang, "Render tile rows (0=auto)"),
-            min_value=0,
-            max_value=2048,
-            value=int(cfg_seed["render_tile_rows"]),
-            step=8,
-        )
-        postprocess_pipeline = st.selectbox(
-            tfield(lang, "Postprocess pipeline"),
-            options=CHOICE_FIELDS["postprocess_pipeline"],
-            index=CHOICE_FIELDS["postprocess_pipeline"].index(
-                _safe_choice(CHOICE_FIELDS["postprocess_pipeline"], str(cfg_seed["postprocess_pipeline"]))
-            ),
-        )
-        gargantua_look_strength = st.slider(
-            tfield(lang, "Gargantua look strength"),
-            min_value=0.0,
-            max_value=2.0,
-            value=float(cfg_seed["gargantua_look_strength"]),
-            step=0.05,
-        )
-        temporal_denoise_mode = st.selectbox(
-            tfield(lang, "Temporal denoise mode"),
-            options=CHOICE_FIELDS["temporal_denoise_mode"],
-            index=CHOICE_FIELDS["temporal_denoise_mode"].index(
-                _safe_choice(CHOICE_FIELDS["temporal_denoise_mode"], str(cfg_seed.get("temporal_denoise_mode", "basic")))
-            ),
-            disabled=(not temporal_reprojection),
-        )
-        temporal_denoise_radius = st.number_input(
-            tfield(lang, "Temporal denoise radius"),
-            min_value=1,
-            max_value=4,
-            value=int(cfg_seed.get("temporal_denoise_radius", 1)),
-            step=1,
-            disabled=(not temporal_reprojection),
-        )
-        temporal_denoise_sigma = st.number_input(
-            tfield(lang, "Temporal denoise sigma"),
-            min_value=0.1,
-            value=float(cfg_seed.get("temporal_denoise_sigma", 18.0)),
-            step=0.5,
-            disabled=(not temporal_reprojection),
-        )
-        temporal_denoise_clip = st.number_input(
-            tfield(lang, "Temporal denoise clip"),
-            min_value=0.1,
-            value=float(cfg_seed.get("temporal_denoise_clip", 9.0)),
-            step=0.5,
-            disabled=(not temporal_reprojection),
-        )
-        motion_vector_scale = st.number_input(
-            tfield(lang, "Motion vector scale"),
-            min_value=0.0,
-            value=float(cfg_seed.get("motion_vector_scale", 1.0)),
-            step=0.05,
-            disabled=(not temporal_reprojection),
-        )
+            roi_supersample_jitter = st.number_input(
+                tfield(lang, "ROI jitter"),
+                min_value=0.01,
+                max_value=1.00,
+                value=float(cfg_seed.get("roi_supersample_jitter", 0.35)),
+                step=0.01,
+                format="%.2f",
+                disabled=(not roi_supersampling),
+            )
+            roi_supersample_samples = st.number_input(
+                tfield(lang, "ROI samples"),
+                min_value=1,
+                max_value=8,
+                value=int(cfg_seed.get("roi_supersample_samples", 2)),
+                step=1,
+                disabled=(not roi_supersampling),
+            )
+            persistent_cache_enabled = st.checkbox(
+                tfield(lang, "Persistent cache"),
+                value=bool(cfg_seed.get("persistent_cache_enabled", True)),
+            )
+            persistent_cache_dir = st.text_input(
+                tfield(lang, "Persistent cache dir"),
+                value=str(cfg_seed.get("persistent_cache_dir", "out/cache")),
+                disabled=(not persistent_cache_enabled),
+            )
+            quality_lock = st.checkbox(
+                tfield(lang, "Quality lock"),
+                value=bool(cfg_seed.get("quality_lock", False)),
+            )
+            quality_lock_psnr_min = st.number_input(
+                tfield(lang, "Quality lock PSNR min"),
+                min_value=1.0,
+                max_value=120.0,
+                value=float(cfg_seed.get("quality_lock_psnr_min", 45.0)),
+                step=0.5,
+                disabled=(not quality_lock),
+            )
+            quality_lock_ssim_min = st.number_input(
+                tfield(lang, "Quality lock SSIM min"),
+                min_value=0.10,
+                max_value=1.0,
+                value=float(cfg_seed.get("quality_lock_ssim_min", 0.985)),
+                step=0.001,
+                format="%.3f",
+                disabled=(not quality_lock),
+            )
+            quality_lock_sample_width = st.number_input(
+                tfield(lang, "Quality lock sample width"),
+                min_value=64,
+                max_value=int(width),
+                value=min(int(width), int(cfg_seed.get("quality_lock_sample_width", 256))),
+                step=8,
+                disabled=(not quality_lock),
+            )
+            quality_lock_sample_height = st.number_input(
+                tfield(lang, "Quality lock sample height"),
+                min_value=64,
+                max_value=int(height),
+                value=min(int(height), int(cfg_seed.get("quality_lock_sample_height", 144))),
+                step=8,
+                disabled=(not quality_lock),
+            )
+            quality_lock_fallback_to_baseline = st.checkbox(
+                tfield(lang, "Quality lock fallback"),
+                value=bool(cfg_seed.get("quality_lock_fallback_to_baseline", True)),
+                disabled=(not quality_lock),
+            )
+
+        with st.expander("Encoding, adaptive & postprocess", expanded=False):
+            animation_workers = st.number_input(
+                tfield(lang, "Animation workers"),
+                min_value=1,
+                max_value=32,
+                value=int(cfg_seed.get("animation_workers", 1)),
+                step=1,
+            )
+            stream_encode_async = st.checkbox(
+                tfield(lang, "Stream encode async"),
+                value=bool(cfg_seed.get("stream_encode_async", True)),
+            )
+            stream_encode_queue_size = st.number_input(
+                tfield(lang, "Stream encode queue"),
+                min_value=1,
+                max_value=64,
+                value=int(cfg_seed.get("stream_encode_queue_size", 4)),
+                step=1,
+                disabled=(not stream_encode_async),
+            )
+            adaptive_spatial_sampling = bool(cfg_seed.get("adaptive_spatial_sampling", False))
+            adaptive_spatial_preview_steps = int(cfg_seed.get("adaptive_spatial_preview_steps", 96))
+            adaptive_spatial_min_scale = float(cfg_seed.get("adaptive_spatial_min_scale", 0.65))
+            adaptive_spatial_quantile = float(cfg_seed.get("adaptive_spatial_quantile", 0.78))
+            if supports_adaptive_spatial:
+                adaptive_spatial_sampling = st.checkbox(
+                    tfield(lang, "Adaptive spatial sampling"),
+                    value=adaptive_spatial_sampling,
+                )
+                adaptive_spatial_preview_steps = st.number_input(
+                    tfield(lang, "Adaptive preview steps"),
+                    min_value=16,
+                    max_value=10000,
+                    value=adaptive_spatial_preview_steps,
+                    step=8,
+                )
+                adaptive_spatial_min_scale = st.number_input(
+                    tfield(lang, "Adaptive min scale"),
+                    min_value=0.10,
+                    max_value=1.00,
+                    value=adaptive_spatial_min_scale,
+                    step=0.05,
+                )
+                adaptive_spatial_quantile = st.number_input(
+                    tfield(lang, "Adaptive quantile"),
+                    min_value=0.50,
+                    max_value=0.995,
+                    value=adaptive_spatial_quantile,
+                    step=0.01,
+                    format="%.3f",
+                )
+            render_tile_rows = st.number_input(
+                tfield(lang, "Render tile rows (0=auto)"),
+                min_value=0,
+                max_value=2048,
+                value=int(cfg_seed["render_tile_rows"]),
+                step=8,
+            )
+            postprocess_pipeline = st.selectbox(
+                tfield(lang, "Postprocess pipeline"),
+                options=CHOICE_FIELDS["postprocess_pipeline"],
+                index=CHOICE_FIELDS["postprocess_pipeline"].index(
+                    _safe_choice(CHOICE_FIELDS["postprocess_pipeline"], str(cfg_seed["postprocess_pipeline"]))
+                ),
+            )
+            gargantua_look_strength = st.slider(
+                tfield(lang, "Gargantua look strength"),
+                min_value=0.0,
+                max_value=2.0,
+                value=float(cfg_seed["gargantua_look_strength"]),
+                step=0.05,
+            )
+            temporal_denoise_mode = st.selectbox(
+                tfield(lang, "Temporal denoise mode"),
+                options=CHOICE_FIELDS["temporal_denoise_mode"],
+                index=CHOICE_FIELDS["temporal_denoise_mode"].index(
+                    _safe_choice(CHOICE_FIELDS["temporal_denoise_mode"], str(cfg_seed.get("temporal_denoise_mode", "basic")))
+                ),
+                disabled=(not temporal_reprojection),
+            )
+            temporal_denoise_radius = st.number_input(
+                tfield(lang, "Temporal denoise radius"),
+                min_value=1,
+                max_value=4,
+                value=int(cfg_seed.get("temporal_denoise_radius", 1)),
+                step=1,
+                disabled=(not temporal_reprojection),
+            )
+            temporal_denoise_sigma = st.number_input(
+                tfield(lang, "Temporal denoise sigma"),
+                min_value=0.1,
+                value=float(cfg_seed.get("temporal_denoise_sigma", 18.0)),
+                step=0.5,
+                disabled=(not temporal_reprojection),
+            )
+            temporal_denoise_clip = st.number_input(
+                tfield(lang, "Temporal denoise clip"),
+                min_value=0.1,
+                value=float(cfg_seed.get("temporal_denoise_clip", 9.0)),
+                step=0.5,
+                disabled=(not temporal_reprojection),
+            )
+            motion_vector_scale = st.number_input(
+                tfield(lang, "Motion vector scale"),
+                min_value=0.0,
+                value=float(cfg_seed.get("motion_vector_scale", 1.0)),
+                step=0.05,
+                disabled=(not temporal_reprojection),
+            )
 
     if perf_profile == "gpu_balanced":
         compile_rhs = True
@@ -3054,20 +3252,65 @@ div[data-testid="stTextInput"] input:disabled {
                 _safe_choice(CHOICE_FIELDS["background_mode"], str(cfg_seed["background_mode"]))
             ),
         )
+        projection_seed = (
+            "darkspace"
+            if str(cfg_seed.get("background_mode", "procedural")) == "darkspace"
+            else str(cfg_seed.get("background_projection", "cubemap"))
+        )
         background_projection = st.selectbox(
             tfield(lang, "Background projection"),
             options=CHOICE_FIELDS["background_projection"],
             index=CHOICE_FIELDS["background_projection"].index(
-                _safe_choice(CHOICE_FIELDS["background_projection"], str(cfg_seed["background_projection"]))
+                _safe_choice(CHOICE_FIELDS["background_projection"], projection_seed)
             ),
         )
+    if background_projection == "darkspace":
+        background_mode = "darkspace"
+    elif background_mode == "darkspace":
+        background_mode = "procedural"
+    is_darkspace = background_mode == "darkspace"
+    is_hdri = background_mode == "hdri"
+    wormhole_remote_hdri_path = str(cfg_seed.get("wormhole_remote_hdri_path") or "")
+    wormhole_remote_hdri_exposure = float(cfg_seed.get("wormhole_remote_hdri_exposure", 1.0))
+    wormhole_remote_hdri_rotation_deg = float(cfg_seed.get("wormhole_remote_hdri_rotation_deg", 0.0))
+    wormhole_remote_cubemap_coherent = bool(cfg_seed.get("wormhole_remote_cubemap_coherent", False))
+    wormhole_background_continuous_blend = bool(cfg_seed.get("wormhole_background_continuous_blend", False))
+    wormhole_background_blend_width = float(cfg_seed.get("wormhole_background_blend_width", 0.10))
     with b2:
-        enable_star_background = st.checkbox(tfield(lang, "Enable star background"), value=bool(cfg_seed["enable_star_background"]))
-        star_density = st.number_input(tfield(lang, "Star density"), min_value=0.0, value=float(cfg_seed["star_density"]), step=0.0001, format="%.6f")
-        star_brightness = st.number_input(tfield(lang, "Star brightness"), min_value=0.0, value=float(cfg_seed["star_brightness"]), step=0.1)
+        enable_star_background = st.checkbox(
+            tfield(lang, "Enable star background"),
+            value=bool(cfg_seed["enable_star_background"]),
+            disabled=is_darkspace,
+            help="Con darkspace lo sfondo locale e` forzato a nero.",
+        )
+        star_density = st.number_input(
+            tfield(lang, "Star density"),
+            min_value=0.0,
+            value=float(cfg_seed["star_density"]),
+            step=0.0001,
+            format="%.6f",
+            disabled=is_darkspace,
+        )
+        star_brightness = st.number_input(
+            tfield(lang, "Star brightness"),
+            min_value=0.0,
+            value=float(cfg_seed["star_brightness"]),
+            step=0.1,
+            disabled=is_darkspace,
+        )
     with b3:
-        hdri_path = st.text_input(tfield(lang, "HDRI path"), value=str(cfg_seed.get("hdri_path") or ""))
-        hdri_exposure = st.number_input(tfield(lang, "HDRI exposure"), min_value=0.01, value=float(cfg_seed["hdri_exposure"]), step=0.1)
+        hdri_path = st.text_input(
+            tfield(lang, "HDRI path"),
+            value=str(cfg_seed.get("hdri_path") or ""),
+            disabled=(not is_hdri),
+        )
+        hdri_exposure = st.number_input(
+            tfield(lang, "HDRI exposure"),
+            min_value=0.01,
+            value=float(cfg_seed["hdri_exposure"]),
+            step=0.1,
+            disabled=(not is_hdri),
+        )
         hdri_rotation_default = _clamp(float(cfg_seed["hdri_rotation_deg"]), 0.0, 360.0)
         hdri_rotation_deg = st.number_input(
             tfield(lang, "HDRI rotation (deg)"),
@@ -3075,44 +3318,51 @@ div[data-testid="stTextInput"] input:disabled {
             max_value=360.0,
             value=hdri_rotation_default,
             step=1.0,
+            disabled=(not is_hdri),
         )
-        wormhole_remote_hdri_path = st.text_input(
-            tfield(lang, "Wormhole remote HDRI path"),
-            value=str(cfg_seed.get("wormhole_remote_hdri_path") or ""),
-        )
-        wormhole_remote_hdri_exposure = st.number_input(
-            tfield(lang, "Wormhole remote HDRI exposure"),
-            min_value=0.01,
-            value=float(cfg_seed.get("wormhole_remote_hdri_exposure", 1.0)),
-            step=0.1,
-        )
-        wormhole_remote_hdri_rotation_default = _clamp(float(cfg_seed.get("wormhole_remote_hdri_rotation_deg", 0.0)), 0.0, 360.0)
-        wormhole_remote_hdri_rotation_deg = st.number_input(
-            tfield(lang, "Wormhole remote HDRI rotation (deg)"),
-            min_value=0.0,
-            max_value=360.0,
-            value=wormhole_remote_hdri_rotation_default,
-            step=1.0,
-        )
-        wormhole_remote_cubemap_coherent = st.checkbox(
-            tfield(lang, "Wormhole remote cubemap coherent"),
-            value=bool(cfg_seed.get("wormhole_remote_cubemap_coherent", False)),
-            help="Usa campionamento cubemap coerente anche sul lato remoto del wormhole (fix seam forte).",
-        )
-        wormhole_background_continuous_blend = st.checkbox(
-            tfield(lang, "Wormhole continuous background blend"),
-            value=bool(cfg_seed.get("wormhole_background_continuous_blend", False)),
-            help="Sfuma gradualmente lo switch locale/remoto vicino alla gola (r=0).",
-        )
-        wormhole_background_blend_width = st.number_input(
-            tfield(lang, "Wormhole background blend width"),
-            min_value=0.0001,
-            max_value=100.0,
-            value=float(cfg_seed.get("wormhole_background_blend_width", 0.10)),
-            step=0.01,
-            format="%.4f",
-            disabled=(not wormhole_background_continuous_blend),
-        )
+        if metric_model == "morris_thorne":
+            with st.expander("Wormhole remote background", expanded=True):
+                wormhole_remote_hdri_path = st.text_input(
+                    tfield(lang, "Wormhole remote HDRI path"),
+                    value=wormhole_remote_hdri_path,
+                )
+                wormhole_remote_hdri_exposure = st.number_input(
+                    tfield(lang, "Wormhole remote HDRI exposure"),
+                    min_value=0.01,
+                    value=float(wormhole_remote_hdri_exposure),
+                    step=0.1,
+                )
+                wormhole_remote_hdri_rotation_default = _clamp(float(wormhole_remote_hdri_rotation_deg), 0.0, 360.0)
+                wormhole_remote_hdri_rotation_deg = st.number_input(
+                    tfield(lang, "Wormhole remote HDRI rotation (deg)"),
+                    min_value=0.0,
+                    max_value=360.0,
+                    value=wormhole_remote_hdri_rotation_default,
+                    step=1.0,
+                )
+                wormhole_remote_cubemap_coherent = st.checkbox(
+                    tfield(lang, "Wormhole remote cubemap coherent"),
+                    value=bool(wormhole_remote_cubemap_coherent),
+                    help="Usa campionamento cubemap coerente anche sul lato remoto del wormhole (fix seam forte).",
+                )
+                wormhole_background_continuous_blend = st.checkbox(
+                    tfield(lang, "Wormhole continuous background blend"),
+                    value=bool(wormhole_background_continuous_blend),
+                    help="Sfuma gradualmente lo switch locale/remoto vicino alla gola (r=0).",
+                )
+                wormhole_background_blend_width = st.number_input(
+                    tfield(lang, "Wormhole background blend width"),
+                    min_value=0.0001,
+                    max_value=100.0,
+                    value=float(wormhole_background_blend_width),
+                    step=0.01,
+                    format="%.4f",
+                    disabled=(not wormhole_background_continuous_blend),
+                )
+    if is_darkspace:
+        enable_star_background = False
+        star_density = 0.0
+        star_brightness = 0.0
 
     video_params: dict[str, Any] = {}
     if mode == "video":
@@ -3386,6 +3636,12 @@ div[data-testid="stTextInput"] input:disabled {
             "disk_layer_accident_sharpness": float(disk_layer_accident_sharpness),
             "disk_layer_global_phase": float(disk_layer_global_phase),
             "disk_layer_phase_rate_hz": float(disk_layer_phase_rate_hz),
+            "enable_disk_differential_rotation": bool(disk_diffrot_enabled),
+            "disk_diffrot_model": disk_diffrot_model,
+            "disk_diffrot_visual_mode": disk_diffrot_visual_mode,
+            "disk_diffrot_strength": float(disk_diffrot_strength),
+            "disk_diffrot_seed": int(disk_diffrot_seed),
+            "disk_diffrot_iteration": disk_diffrot_iteration,
             "disk_adaptive_stratification": bool(disk_adaptive_stratification),
             "disk_adaptive_layers_min": int(disk_adaptive_layers_min),
             "disk_adaptive_layers_max": int(disk_adaptive_layers_max),
@@ -3949,6 +4205,7 @@ div[data-testid="stTextInput"] input:disabled {
                 st.error("Video bloccato dal gate di qualità. Correggi parametri e rilancia.")
                 st.stop()
             st.success("Dry-run superato: avvio del rendering video.")
+            st.info("Fase 2/2: avvio render video. Durante warmup kernel i primi frame possono impiegare un po'.")
 
     st.info(tr(lang, "cmd_launched", "Comando lanciato:"))
     st.code(" ".join(cmd), language="bash")
@@ -3974,11 +4231,11 @@ div[data-testid="stTextInput"] input:disabled {
             queued = list(st.session_state.get("async_queue") or [])
             queued.append(queue_entry)
             st.session_state["async_queue"] = queued
-            st.success(
+            st.session_state["bg_launch_notice"] = (
                 f"Job accodato: `{job_id}` (posizione {len(queued)}). "
                 f"Apri il pannello queue per monitorare."
             )
-            return
+            st.rerun()
 
         proc, meta = _launch_background_process(
             cmd=list(cmd),
@@ -3991,11 +4248,11 @@ div[data-testid="stTextInput"] input:disabled {
         )
         st.session_state["async_proc"] = proc
         st.session_state["async_meta"] = meta
-        st.success(
+        st.session_state["bg_launch_notice"] = (
             f"Job avviato in background (PID {proc.pid}, id {job_id}). "
             f"Apri il pannello '{tr(lang, 'bg_job', 'Job in background')}' per monitorarlo."
         )
-        return
+        st.rerun()
 
     progress_widget = st.progress(0.0, text="Render rows: 0/0 (0.0%)")
     log_placeholder = st.empty()

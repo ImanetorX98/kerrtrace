@@ -28,23 +28,23 @@ def isco_radius(spin: float) -> float:
 
 @dataclass(frozen=True)
 class RenderConfig:
-    width: int = 960
-    height: int = 540
+    width: int = 1280
+    height: int = 720
     fov_deg: float = 38.0
-    coordinate_system: str = "boyer_lindquist"
+    coordinate_system: str = "kerr_schild"
     metric_model: str = "kerr"
-    spin: float = 0.92
+    spin: float = 0.85
     charge: float = 0.0
     cosmological_constant: float = 0.0
     wormhole_throat_radius: float = 1.0
     wormhole_length_scale: float = 1.0
     wormhole_allow_throat_crossing: bool = False
-    observer_radius: float = 50.0
-    observer_inclination_deg: float = 70.0
+    observer_radius: float = 30.0
+    observer_inclination_deg: float = 80.0
     observer_azimuth_deg: float = 0.0
     observer_roll_deg: float = 0.0
     disk_inner_radius: float | None = None
-    disk_outer_radius: float = 28.0
+    disk_outer_radius: float = 12.0
     enable_accretion_disk: bool = True
     emissivity_index: float = 2.3
     inner_edge_boost: float = 2.2
@@ -74,7 +74,7 @@ class RenderConfig:
     destripe_meridian: bool = False
     physical_disk_model: bool = True
     disk_model: str = "physical_nt"
-    disk_radial_profile: str = "nt_proxy"
+    disk_radial_profile: str = "nt_page_thorne"
     disk_temperature_inner: float = 18000.0
     disk_color_correction: float = 1.7
     disk_plasma_warmth: float = 0.38
@@ -90,6 +90,12 @@ class RenderConfig:
     disk_layer_accident_strength: float = 0.42
     disk_layer_accident_count: float = 3.8
     disk_layer_accident_sharpness: float = 7.0
+    enable_disk_differential_rotation: bool = False
+    disk_diffrot_model: str = "keplerian_lut"
+    disk_diffrot_visual_mode: str = "layer_phase"
+    disk_diffrot_strength: float = 1.0
+    disk_diffrot_seed: int = 7
+    disk_diffrot_iteration: str = "v1_basic"
     disk_adaptive_stratification: bool = False
     disk_adaptive_layers_min: int = 8
     disk_adaptive_layers_max: int = 48
@@ -387,10 +393,10 @@ class RenderConfig:
             raise ValueError("inner_edge_boost must be >= 0")
         if cfg.outer_edge_boost < 0.0:
             raise ValueError("outer_edge_boost must be >= 0")
-        if cfg.background_mode not in {"procedural", "hdri"}:
-            raise ValueError("background_mode must be 'procedural' or 'hdri'")
-        if cfg.background_projection not in {"cubemap", "equirectangular"}:
-            raise ValueError("background_projection must be 'cubemap' or 'equirectangular'")
+        if cfg.background_mode not in {"procedural", "hdri", "darkspace"}:
+            raise ValueError("background_mode must be 'procedural', 'hdri' or 'darkspace'")
+        if cfg.background_projection not in {"cubemap", "equirectangular", "darkspace"}:
+            raise ValueError("background_projection must be 'cubemap', 'equirectangular' or 'darkspace'")
         if cfg.cubemap_face_size < 64 or cfg.cubemap_face_size > 4096:
             raise ValueError("cubemap_face_size must be in [64, 4096]")
         if cfg.background_mode == "hdri" and not cfg.hdri_path:
@@ -449,6 +455,18 @@ class RenderConfig:
             raise ValueError("disk_layer_accident_count must be in [0, 128]")
         if cfg.disk_layer_accident_sharpness < 1.0 or cfg.disk_layer_accident_sharpness > 32.0:
             raise ValueError("disk_layer_accident_sharpness must be in [1, 32]")
+        if cfg.disk_diffrot_model not in {"keplerian_lut", "keplerian_metric"}:
+            raise ValueError("disk_diffrot_model must be 'keplerian_lut' or 'keplerian_metric'")
+        if cfg.disk_diffrot_visual_mode not in {"layer_phase", "annular_tiles", "hybrid"}:
+            raise ValueError(
+                "disk_diffrot_visual_mode must be 'layer_phase', 'annular_tiles', or 'hybrid'"
+            )
+        if cfg.disk_diffrot_strength < 0.0 or cfg.disk_diffrot_strength > 3.0:
+            raise ValueError("disk_diffrot_strength must be in [0, 3]")
+        if cfg.disk_diffrot_seed < 0:
+            raise ValueError("disk_diffrot_seed must be >= 0")
+        if cfg.disk_diffrot_iteration not in {"v1_basic", "v2_visibility", "v3_robust"}:
+            raise ValueError("disk_diffrot_iteration must be one of: v1_basic, v2_visibility, v3_robust")
         if cfg.disk_adaptive_layers_min < 2 or cfg.disk_adaptive_layers_min > 1024:
             raise ValueError("disk_adaptive_layers_min must be in [2, 1024]")
         if cfg.disk_adaptive_layers_max < 2 or cfg.disk_adaptive_layers_max > 2048:

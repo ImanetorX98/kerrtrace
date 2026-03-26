@@ -316,6 +316,13 @@ class KerrRayTracer:
             self._cubemap_faces = self._get_or_build_cubemap()
             if self.is_wormhole and self.config.wormhole_remote_cubemap_coherent:
                 self._wormhole_remote_cubemap_faces = self._get_or_build_wormhole_remote_cubemap()
+        need_omega_lut = self.enable_disk and (
+            self.config.disk_model == "physical_nt"
+            or (
+                self.config.enable_disk_differential_rotation
+                and self.config.disk_diffrot_model == "keplerian_lut"
+            )
+        )
         if self.enable_disk and self.config.disk_model == "physical_nt":
             try:
                 rin0 = float(self.config.disk_inner_radius)
@@ -326,6 +333,13 @@ class KerrRayTracer:
                     self._disk_flux_lut_main = self._build_nt_general_lut(rin=rin0, rmax=rout0)
             except Exception:
                 self._disk_flux_lut_main = None
+            try:
+                rin0 = float(self.config.disk_inner_radius)
+                rout0 = float(self.config.disk_outer_radius)
+                self._disk_omega_lut_main = self._build_keplerian_omega_lut(rin=rin0, rmax=rout0)
+            except Exception:
+                self._disk_omega_lut_main = None
+        elif need_omega_lut:
             try:
                 rin0 = float(self.config.disk_inner_radius)
                 rout0 = float(self.config.disk_outer_radius)
@@ -2310,6 +2324,8 @@ class KerrRayTracer:
         phi_disk: torch.Tensor,
         t_disk: torch.Tensor,
         layer_complexity: torch.Tensor | None = None,
+        omega_layer: torch.Tensor | None = None,
+        layer_key: torch.Tensor | None = None,
     ) -> torch.Tensor:
         cfg = self.config
         n_layers = max(2, int(cfg.disk_layer_count))
@@ -2350,7 +2366,14 @@ class KerrRayTracer:
         base_color = c0 + (c1 - c0) * layer_frac.unsqueeze(-1)
 
         layer_r = rin + u0 * span
-        omega_layer = self._disk_keplerian_omega(layer_r)
+        if omega_layer is None:
+            omega_layer = (
+                self._disk_diffrot_omega(layer_r)
+                if cfg.enable_disk_differential_rotation
+                else self._disk_keplerian_omega(layer_r)
+            )
+        if layer_key is None:
+            layer_key = layer_idx
         flow_phi = (
             phi_disk
             - omega_layer
@@ -2358,6 +2381,10 @@ class KerrRayTracer:
             * torch.as_tensor(cfg.disk_layer_time_scale, dtype=self.dtype, device=self.device)
             - torch.as_tensor(cfg.disk_layer_global_phase, dtype=self.dtype, device=self.device)
         )
+        if cfg.enable_disk_differential_rotation:
+            flow_phi, tile_gain = self._disk_diffrot_phase_terms(flow_phi, layer_key, u0)
+        else:
+            tile_gain = torch.ones_like(flow_phi)
         phase = (
             torch.as_tensor(cfg.disk_layer_pattern_count, dtype=self.dtype, device=self.device) * flow_phi
             + (2.0 * math.pi) * layer_idx / n_layers_t
@@ -2366,6 +2393,7 @@ class KerrRayTracer:
         wave2 = 0.5 + 0.5 * torch.sin(0.73 * phase + 8.0 * u0)
         contrast = torch.as_tensor(cfg.disk_layer_pattern_contrast, dtype=self.dtype, device=self.device)
         band = (1.0 - contrast) + contrast * (0.28 + 0.72 * wave * (0.82 + 0.18 * wave2))
+        band = band * tile_gain
 
         # Add coherent rotating inhomogeneities per layer as azimuthal
         # rectangular segments, so disk rotation is readable in animation.
@@ -2425,6 +2453,76 @@ class KerrRayTracer:
         hot_tint = torch.tensor([1.00, 0.92, 0.70], dtype=self.dtype, device=self.device).view(1, 3)
         layer_color = layer_color + 0.20 * inner_hot * hot_tint
         return torch.clamp(layer_color, min=0.0, max=1.5)
+
+    def _disk_diffrot_iteration_params(self) -> tuple[float, float, float]:
+        """
+        Return iteration tuning knobs as:
+        - phase offset scale
+        - visual tile mix
+        - tile smoothing / sharpness
+        """
+        iteration = self.config.disk_diffrot_iteration
+        if iteration == "v1_basic":
+            return 0.0, 0.0, 1.0
+        if iteration == "v2_visibility":
+            return 0.58, 0.34, 1.2
+        return 0.36, 0.22, 0.72
+
+    def _disk_diffrot_phase_offset(self, layer_key: torch.Tensor, radial_key: torch.Tensor) -> torch.Tensor:
+        seed = torch.as_tensor(float(self.config.disk_diffrot_seed), dtype=self.dtype, device=self.device)
+        raw = torch.sin(
+            (layer_key + 1.0) * 12.9898
+            + (radial_key + 1.0) * 78.233
+            + seed * 37.719
+            + 0.5
+        ) * 43758.5453
+        return (self._fract(raw) - 0.5) * (2.0 * math.pi)
+
+    def _disk_diffrot_phase_terms(
+        self,
+        phase: torch.Tensor,
+        layer_key: torch.Tensor,
+        radial_key: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        cfg = self.config
+        if (not cfg.enable_disk_differential_rotation) or cfg.disk_diffrot_strength <= 0.0:
+            return phase, torch.ones_like(phase)
+
+        phase_offset_scale, tile_mix, tile_sharpness = self._disk_diffrot_iteration_params()
+        if phase_offset_scale > 0.0:
+            phase = torch.remainder(
+                phase + phase_offset_scale * self._disk_diffrot_phase_offset(layer_key, radial_key),
+                2.0 * math.pi,
+            )
+
+        if cfg.disk_diffrot_visual_mode == "layer_phase" or tile_mix <= 0.0:
+            return phase, torch.ones_like(phase)
+
+        strength = torch.as_tensor(cfg.disk_diffrot_strength, dtype=self.dtype, device=self.device)
+        tile_drive = phase * (1.0 + 0.15 * strength)
+        tile_drive = tile_drive + (layer_key + 1.0) * 0.37 + radial_key * 3.1
+        tile_wave = 0.5 + 0.5 * torch.sin(tile_drive)
+
+        if cfg.disk_diffrot_visual_mode == "hybrid":
+            fine_wave = 0.5 + 0.5 * torch.sin(1.73 * tile_drive + 0.5 * phase)
+            tile_wave = 0.62 * tile_wave + 0.38 * fine_wave
+
+        if cfg.disk_diffrot_iteration == "v3_robust":
+            sharp = torch.as_tensor(tile_sharpness, dtype=self.dtype, device=self.device)
+            tile_wave = 0.5 + 0.5 * torch.tanh((tile_wave - 0.5) * (1.0 + sharp))
+
+        tile_gain = torch.clamp((1.0 - tile_mix) + tile_mix * (0.82 + 0.36 * tile_wave), min=0.55, max=1.45)
+        return phase, tile_gain
+
+    def _disk_diffrot_omega(self, r: torch.Tensor, metric: object | None = None) -> torch.Tensor:
+        cfg = self.config
+        if cfg.disk_diffrot_model == "keplerian_metric":
+            omega = self._metric_keplerian_omega(r, metric=metric)
+        else:
+            omega = self._disk_keplerian_omega(r)
+        if cfg.enable_disk_differential_rotation:
+            omega = omega * torch.as_tensor(cfg.disk_diffrot_strength, dtype=self.dtype, device=self.device)
+        return omega
 
     def _blackbody_rgb(self, temperature_kelvin: torch.Tensor) -> torch.Tensor:
         t = torch.clamp(temperature_kelvin, min=1000.0, max=40000.0) / 100.0
@@ -2902,6 +3000,8 @@ class KerrRayTracer:
             p = Path(cfg.hdri_path).expanduser().resolve()
             st = p.stat()
             src = ("hdri", str(p), int(st.st_mtime_ns), int(st.st_size))
+        elif cfg.background_mode == "darkspace":
+            src = ("darkspace",)
         else:
             src = (
                 "procedural",
@@ -3033,6 +3133,8 @@ class KerrRayTracer:
             u = torch.remainder(phi + rot, two_pi) / two_pi
             v = torch.clamp(theta / self.pi, min=0.0, max=1.0)
             return self._sample_equirectangular(texture, u, v) * float(exposure)
+        if cfg.background_mode == "darkspace":
+            return torch.zeros((theta.shape[0], 3), dtype=self.dtype, device=self.device)
         if cfg.background_mode == "hdri":
             return torch.zeros((theta.shape[0], 3), dtype=self.dtype, device=self.device)
         return self._sample_procedural_equirect(theta, phi)
@@ -4729,6 +4831,8 @@ class KerrRayTracer:
                     sky_phi[escaped_idx],
                     side_sign=sky_side[escaped_idx],
                 )
+            elif cfg.background_mode == "darkspace":
+                rgb[escaped_idx] = torch.zeros((escaped_idx.shape[0], 3), dtype=self.dtype, device=self.device)
             else:
                 sky = torch.tensor([0.012, 0.018, 0.030], dtype=self.dtype, device=self.device)
                 rgb[escaped_idx] = sky
@@ -4823,7 +4927,11 @@ class KerrRayTracer:
                 cfg.wormhole_length_scale,
             )
 
-            omega = self._disk_keplerian_omega(r_profile)
+            omega = (
+                self._disk_diffrot_omega(r_profile, metric=metric)
+                if cfg.enable_disk_differential_rotation
+                else self._disk_keplerian_omega(r_profile)
+            )
             u_t = torch.rsqrt(torch.clamp(-(metric.g_tt + 2.0 * metric.g_tphi * omega + metric.g_phiphi * omega * omega), min=1.0e-8))
 
             denom = -(p_t * u_t + p_phi * omega * u_t)
@@ -4902,9 +5010,19 @@ class KerrRayTracer:
                         phi_disk=phi_disk,
                         t_disk=t_disk,
                         layer_complexity=layer_complexity,
+                        omega_layer=omega,
                     )
                     layer_mix = torch.as_tensor(cfg.disk_layer_mix, dtype=self.dtype, device=self.device)
                     color = (1.0 - layer_mix) * color + layer_mix * layered
+                if cfg.enable_disk_differential_rotation and cfg.disk_diffrot_visual_mode != "layer_phase":
+                    phase_vis = torch.remainder(phi_disk - omega * t_disk, 2.0 * self.pi)
+                    if cfg.disk_structure_mode == "concentric_annuli":
+                        n_vis = max(4, int(cfg.disk_annuli_count))
+                    else:
+                        n_vis = max(4, int(cfg.disk_layer_count))
+                    layer_key_vis = torch.floor(torch.clamp(x, min=0.0, max=1.0 - 1.0e-7) * float(n_vis))
+                    _, tile_gain_vis = self._disk_diffrot_phase_terms(phase_vis, layer_key_vis, x)
+                    color = color * torch.clamp(0.88 + 0.12 * tile_gain_vis, min=0.5, max=1.5).unsqueeze(-1)
                 color = color * (0.90 + 0.10 * torch.sqrt(torch.clamp(volume_factor, min=0.0)).unsqueeze(-1))
                 dilution = 1.0 / torch.clamp(torch.pow(f_col, 4.0), min=1.0)
                 disk_rgb = color * (dilution * 1.05 * intensity.unsqueeze(-1))
@@ -4915,11 +5033,27 @@ class KerrRayTracer:
                 intensity = intensity * (0.35 + body + cfg.inner_edge_boost * inner_rim + cfg.outer_edge_boost * outer_rim)
 
                 # Discontinuous azimuthal plasma sectors in a co-rotating frame to visualize disk motion.
+                omega = (
+                    self._disk_diffrot_omega(r_profile, metric=metric)
+                    if cfg.enable_disk_differential_rotation
+                    else self._disk_keplerian_omega(r_profile)
+                )
                 phase = torch.remainder(phi_disk - omega * t_disk, 2.0 * self.pi)
+                if cfg.enable_disk_differential_rotation:
+                    if cfg.disk_structure_mode == "concentric_annuli":
+                        n_ann = max(4, int(cfg.disk_annuli_count))
+                        layer_key = torch.floor(torch.clamp(x, min=0.0, max=1.0 - 1.0e-7) * float(n_ann))
+                    else:
+                        layer_key = torch.floor(torch.clamp(x, min=0.0, max=1.0) * 8.0)
+                    phase, tile_gain = self._disk_diffrot_phase_terms(phase, layer_key, x)
+                else:
+                    tile_gain = torch.ones_like(phase)
                 sector_wave = torch.sin(14.0 * phase + 9.0 * (1.0 - x))
                 sector_mask = (sector_wave > 0.0).to(self.dtype)
                 fine_band = (torch.sin(22.0 * x + 1.6 * phase) > 0.35).to(self.dtype)
                 discontinuity = torch.clamp(0.18 + 0.82 * sector_mask * (0.65 + 0.35 * fine_band), min=0.0, max=1.0)
+                if cfg.enable_disk_differential_rotation and cfg.disk_diffrot_visual_mode != "layer_phase":
+                    discontinuity = discontinuity * tile_gain
                 intensity = intensity * (0.35 + 1.25 * discontinuity)
                 intensity = intensity * vertical_gain
                 intensity = intensity * order_gain
@@ -4928,6 +5062,8 @@ class KerrRayTracer:
                 intensity = torch.clamp(intensity, min=0.0, max=30.0)
                 heat = torch.clamp(torch.pow(1.0 - x, 0.42) + 0.20 * torch.pow(torch.clamp(g_factor / 3.0, min=0.0, max=1.0), 1.2), min=0.0, max=1.0)
                 phase_wave = 0.5 + 0.5 * torch.sin(14.0 * phase + 0.9 * torch.sin(2.0 * phase))
+                if cfg.enable_disk_differential_rotation and cfg.disk_diffrot_visual_mode == "hybrid":
+                    phase_wave = torch.clamp(0.65 * phase_wave + 0.35 * tile_gain, min=0.0, max=1.0)
                 hard_switch = (phase_wave > 0.52).to(self.dtype).unsqueeze(-1)
                 heat_hot = torch.clamp(heat + 0.22 * discontinuity + 0.18 * phase_wave, min=0.0, max=1.0)
                 heat_cool = torch.clamp(heat - 0.18 + 0.08 * (1.0 - phase_wave), min=0.0, max=1.0)
