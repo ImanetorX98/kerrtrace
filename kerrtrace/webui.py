@@ -189,6 +189,110 @@ I18N: dict[str, dict[str, str]] = {
         "sim_completed": "Simulazione completata. Log:",
         "sim_failed": "Simulazione fallita",
         "output_not_found_expected": "Output non trovato automaticamente. Atteso:",
+        "theme_label": "Tema UI",
+        "theme_auto": "Auto (browser/sistema)",
+        "theme_dark": "Scuro",
+        "theme_light": "Chiaro",
+        "queue_job_background": "Queue job (background)",
+        "queued_job_started": "Avviato job in coda",
+        "in_queue_label": "In coda:",
+        "no_jobs_in_queue": "Nessun job in coda.",
+        "recent_history": "Storico recente:",
+        "history_empty": "Storico vuoto.",
+        "clear_queue": "Svuota coda",
+        "clear_history": "Pulisci storico",
+        "preset_manager": "Preset manager",
+        "preset_active": "Preset attivo",
+        "load_preset": "Carica preset",
+        "preset_none": "(nessuno)",
+        "lock_critical_fields_on_load": "Blocca campi critici al caricamento",
+        "load_selected_preset": "Carica preset selezionato",
+        "preset_loaded": "Preset caricato",
+        "preset_load_error": "Errore caricamento preset",
+        "unlock_preset_critical_fields": "Sblocca campi critici preset",
+        "preset_name": "Nome preset",
+        "preset_tags_comma": "Tag preset (separati da virgola)",
+        "store_critical_lock_fields": "Salva lock campi critici",
+        "save_preset": "Salva preset",
+        "preset_name_invalid": "Nome preset vuoto o non valido.",
+        "preset_saved": "Preset salvato",
+        "preset_save_error": "Errore salvataggio preset",
+        "morris_thorne_areolar_only": "Per Morris-Thorne è disponibile solo la coordinata in variabile areolare.",
+        "unused_metric_params": "Parametri non usati dalla metrica selezionata",
+        "layered_disk_options": "Opzioni disco stratificato",
+        "differential_rotation_options": "Opzioni rotazione differenziale",
+        "volume_emission_options": "Opzioni volume emission",
+        "kernel_camera_options": "Kernel e camera",
+        "morris_thorne_seam_fixes": "Fix seam Morris-Thorne",
+        "roi_quality_cache_options": "ROI, qualità e cache",
+        "encoding_adaptive_postprocess": "Encoding, adattivo e postprocess",
+        "wormhole_remote_background": "Sfondo remoto wormhole",
+        "live_frame_preview": "Anteprima frame live",
+        "keep_frames_resume_preview": "Mantieni frame (resume/preview)",
+        "resume_from_existing_frames": "Riprendi da frame esistenti",
+        "frames_directory": "Cartella frame",
+        "run_ab_compare_quick": "Esegui confronto A/B (frame rapido)",
+        "preflight_auto": "Preflight fisico automatico",
+        "dryrun_gate_before_video": "Dry-run 256p gate prima del video",
+        "autotune_quick_benchmark": "Autotune device/tiling (benchmark rapido)",
+        "ab_compare_settings": "Impostazioni confronto A/B",
+        "ab_width": "Larghezza A/B",
+        "ab_max_steps": "Max step A/B",
+        "ab_patch_a_json": "Patch JSON A",
+        "ab_patch_b_json": "Patch JSON B",
+        "json_patch_short": "JSON",
+        "config_json": "Config JSON",
+        "preset_lock_active_critical": "Preset lock attivo sui campi critici",
+        "preflight_prefix": "Preflight",
+        "ab_compare_only_single_video": "Confronto A/B rapido supportato solo per single_frame/video (kerrtrace).",
+        "ab_compare_result": "Risultato confronto A/B",
+        "ab_patch_json_invalid": "Patch JSON A/B non valida",
+        "ab_config_invalid": "Configurazione A/B non valida",
+        "ab_faster_case": "Caso più veloce",
+        "ab_speedup": "speedup",
+        "ab_case": "Caso",
+        "failed": "fallito",
+        "autotune_benchmark": "Benchmark autotune",
+        "autotune_benchmark_caption": "Benchmark rapido su frame ridotto per selezionare device e tiling più efficienti.",
+        "autotune_applied": "Autotune applicato",
+        "autotune_not_better": "Autotune non ha trovato un profilo migliore; mantengo la configurazione corrente.",
+        "progressive_output_allocated": "Output progressivo allocato",
+        "script_not_found": "Script non trovato",
+        "obj_model_required_starship": "OBJ model path è obbligatorio in modalità Starship.",
+        "obj_not_found": "OBJ non trovato",
+        "gpu_required_not_cpu": "Richiesta GPU attiva: imposta device su auto/mps/cuda (non cpu).",
+        "ship_program_json_invalid": "Ship thrust program JSON non valido",
+        "multi_ship_json_invalid": "Multi-ship config JSON non valido",
+        "dryrun_gate_title": "Dry-run gate 256p",
+        "dryrun_gate_caption": "Eseguo 1 frame rapido prima del video per evitare render lunghi non validi.",
+        "dryrun_preparing": "Dry-run: preparazione",
+        "dryrun_failed": "Dry-run fallito",
+        "dryrun_completed": "Dry-run completato",
+        "dryrun_preview": "Anteprima dry-run",
+        "dryrun_metrics": "Metriche dry-run",
+        "dryrun_gate_reason": "Motivo dry-run gate",
+        "video_blocked_quality_gate": "Video bloccato dal gate di qualità. Correggi parametri e rilancia.",
+        "dryrun_passed_starting_video": "Dry-run superato: avvio del rendering video.",
+        "phase_2_2_start_video": "Fase 2/2: avvio render video. Durante warmup kernel i primi frame possono impiegare un po'.",
+        "job_queued": "Job accodato",
+        "position": "posizione",
+        "open_queue_panel_to_monitor": "Apri il pannello queue per monitorare.",
+        "job_started_background": "Job avviato in background",
+        "open_panel_to_monitor": "Apri il pannello",
+        "to_monitor": "per monitorarlo",
+        "auto_refresh_monitor": "Auto-refresh monitor",
+        "auto_refresh_interval_sec": "Intervallo auto-refresh (s)",
+        "auto_refresh_active_every": "Auto-refresh attivo: aggiornamento ogni {seconds}s.",
+        "render_rows_initial": "Render rows: 0/0 (0.0%)",
+        "render_rows_completed": "Render rows: completed (100.0%)",
+        "pending_video_ready": "Dry-run superato. Render video pronto.",
+        "pending_video_confirm_hint": "Conferma per avviare il render completo con questo JSON.",
+        "pending_video_confirm": "Conferma render video",
+        "pending_video_cancel": "Annulla render pendente",
+        "pending_video_missing": "Configurazione video pendente non valida o incompleta.",
+        "pending_video_mode_label": "Modalità lancio",
+        "pending_video_live": "live",
+        "pending_video_bg": "background",
     },
     "en": {
         "page_title": "KerrTrace WebUI",
@@ -243,6 +347,110 @@ I18N: dict[str, dict[str, str]] = {
         "sim_completed": "Simulation completed. Log:",
         "sim_failed": "Simulation failed",
         "output_not_found_expected": "Output not found automatically. Expected:",
+        "theme_label": "UI Theme",
+        "theme_auto": "Auto (browser/system)",
+        "theme_dark": "Dark",
+        "theme_light": "Light",
+        "queue_job_background": "Queue job (background)",
+        "queued_job_started": "Queued job started",
+        "in_queue_label": "Queued:",
+        "no_jobs_in_queue": "No queued jobs.",
+        "recent_history": "Recent history:",
+        "history_empty": "History is empty.",
+        "clear_queue": "Clear queue",
+        "clear_history": "Clear history",
+        "preset_manager": "Preset manager",
+        "preset_active": "Active preset",
+        "load_preset": "Load preset",
+        "preset_none": "(none)",
+        "lock_critical_fields_on_load": "Lock critical fields on load",
+        "load_selected_preset": "Load selected preset",
+        "preset_loaded": "Preset loaded",
+        "preset_load_error": "Preset load error",
+        "unlock_preset_critical_fields": "Unlock preset critical fields",
+        "preset_name": "Preset name",
+        "preset_tags_comma": "Preset tags (comma separated)",
+        "store_critical_lock_fields": "Store critical lock fields",
+        "save_preset": "Save preset",
+        "preset_name_invalid": "Preset name is empty or invalid.",
+        "preset_saved": "Preset saved",
+        "preset_save_error": "Preset save error",
+        "morris_thorne_areolar_only": "For Morris-Thorne only the areolar-variable coordinate is available.",
+        "unused_metric_params": "Parameters not used by selected metric",
+        "layered_disk_options": "Layered disk options",
+        "differential_rotation_options": "Differential rotation options",
+        "volume_emission_options": "Volume emission options",
+        "kernel_camera_options": "Kernel & camera",
+        "morris_thorne_seam_fixes": "Morris-Thorne seam fixes",
+        "roi_quality_cache_options": "ROI, quality & cache",
+        "encoding_adaptive_postprocess": "Encoding, adaptive & postprocess",
+        "wormhole_remote_background": "Wormhole remote background",
+        "live_frame_preview": "Live frame preview",
+        "keep_frames_resume_preview": "Keep frames (resume/preview)",
+        "resume_from_existing_frames": "Resume from existing frames",
+        "frames_directory": "Frames directory",
+        "run_ab_compare_quick": "Run A/B compare (quick frame)",
+        "preflight_auto": "Automatic physical preflight",
+        "dryrun_gate_before_video": "Dry-run 256p gate before video",
+        "autotune_quick_benchmark": "Autotune device/tiling (quick benchmark)",
+        "ab_compare_settings": "A/B compare settings",
+        "ab_width": "A/B width",
+        "ab_max_steps": "A/B max steps",
+        "ab_patch_a_json": "A patch JSON",
+        "ab_patch_b_json": "B patch JSON",
+        "json_patch_short": "JSON",
+        "config_json": "Config JSON",
+        "preset_lock_active_critical": "Preset lock active on critical fields",
+        "preflight_prefix": "Preflight",
+        "ab_compare_only_single_video": "Quick A/B compare is supported only for single_frame/video (kerrtrace).",
+        "ab_compare_result": "A/B compare result",
+        "ab_patch_json_invalid": "Invalid A/B patch JSON",
+        "ab_config_invalid": "Invalid A/B configuration",
+        "ab_faster_case": "Faster case",
+        "ab_speedup": "speedup",
+        "ab_case": "Case",
+        "failed": "failed",
+        "autotune_benchmark": "Autotune benchmark",
+        "autotune_benchmark_caption": "Quick reduced-frame benchmark to choose the best device and tiling.",
+        "autotune_applied": "Autotune applied",
+        "autotune_not_better": "Autotune did not find a better profile; keeping current settings.",
+        "progressive_output_allocated": "Progressive output allocated",
+        "script_not_found": "Script not found",
+        "obj_model_required_starship": "OBJ model path is required in Starship mode.",
+        "obj_not_found": "OBJ not found",
+        "gpu_required_not_cpu": "GPU required: set device to auto/mps/cuda (not cpu).",
+        "ship_program_json_invalid": "Invalid ship thrust program JSON",
+        "multi_ship_json_invalid": "Invalid multi-ship config JSON",
+        "dryrun_gate_title": "Dry-run gate 256p",
+        "dryrun_gate_caption": "Run one quick frame before video to avoid long invalid renders.",
+        "dryrun_preparing": "Dry-run: preparing",
+        "dryrun_failed": "Dry-run failed",
+        "dryrun_completed": "Dry-run: completed",
+        "dryrun_preview": "Dry-run preview",
+        "dryrun_metrics": "Dry-run metrics",
+        "dryrun_gate_reason": "Dry-run gate reason",
+        "video_blocked_quality_gate": "Video blocked by quality gate. Fix parameters and rerun.",
+        "dryrun_passed_starting_video": "Dry-run passed: starting video render.",
+        "phase_2_2_start_video": "Phase 2/2: starting video render. During kernel warmup first frames may take longer.",
+        "job_queued": "Job queued",
+        "position": "position",
+        "open_queue_panel_to_monitor": "Open the queue panel to monitor it.",
+        "job_started_background": "Background job started",
+        "open_panel_to_monitor": "Open panel",
+        "to_monitor": "to monitor it",
+        "auto_refresh_monitor": "Auto-refresh monitor",
+        "auto_refresh_interval_sec": "Auto-refresh interval (s)",
+        "auto_refresh_active_every": "Auto-refresh active: updating every {seconds}s.",
+        "render_rows_initial": "Render rows: 0/0 (0.0%)",
+        "render_rows_completed": "Render rows: completed (100.0%)",
+        "pending_video_ready": "Dry-run passed. Video render is ready.",
+        "pending_video_confirm_hint": "Confirm to start the full render with this JSON.",
+        "pending_video_confirm": "Confirm video render",
+        "pending_video_cancel": "Cancel pending render",
+        "pending_video_missing": "Pending video configuration is invalid or incomplete.",
+        "pending_video_mode_label": "Launch mode",
+        "pending_video_live": "live",
+        "pending_video_bg": "background",
     },
     "es": {
         "author_label": "Autor",
@@ -273,6 +481,10 @@ I18N: dict[str, dict[str, str]] = {
         "resolution_set": "Resolución establecida en",
         "run_live": "Lanzar simulación (en vivo)",
         "run_bg": "Lanzar en segundo plano",
+        "theme_label": "Tema UI",
+        "theme_auto": "Auto (navegador/sistema)",
+        "theme_dark": "Oscuro",
+        "theme_light": "Claro",
     },
     "ro": {
         "page_title": "KerrTrace WebUI",
@@ -327,6 +539,10 @@ I18N: dict[str, dict[str, str]] = {
         "sim_completed": "Simulare finalizată. Log:",
         "sim_failed": "Simulare eșuată",
         "output_not_found_expected": "Output-ul nu a fost găsit automat. Așteptat:",
+        "theme_label": "Temă UI",
+        "theme_auto": "Auto (browser/sistem)",
+        "theme_dark": "Întunecat",
+        "theme_light": "Luminos",
     },
     "ru": {
         "author_label": "Автор",
@@ -397,11 +613,19 @@ I18N: dict[str, dict[str, str]] = {
         "sim_completed": "模拟完成。日志：",
         "sim_failed": "模拟失败",
         "output_not_found_expected": "无法自动找到输出。期望路径：",
+        "theme_label": "界面主题",
+        "theme_auto": "自动（浏览器/系统）",
+        "theme_dark": "深色",
+        "theme_light": "浅色",
     },
     "fr": {
         "author_label": "Auteur",
         "language_label": "Langue",
         "manual_open": "Ouvrir un fichier manuellement",
+        "theme_label": "Thème UI",
+        "theme_auto": "Auto (navigateur/système)",
+        "theme_dark": "Sombre",
+        "theme_light": "Clair",
     },
     "de": {
         "page_title": "KerrTrace WebUI",
@@ -456,6 +680,10 @@ I18N: dict[str, dict[str, str]] = {
         "sim_completed": "Simulation abgeschlossen. Log:",
         "sim_failed": "Simulation fehlgeschlagen",
         "output_not_found_expected": "Ausgabe konnte nicht automatisch gefunden werden. Erwartet:",
+        "theme_label": "UI-Thema",
+        "theme_auto": "Auto (Browser/System)",
+        "theme_dark": "Dunkel",
+        "theme_light": "Hell",
     },
     "pt": {
         "author_label": "Autor",
@@ -463,6 +691,14 @@ I18N: dict[str, dict[str, str]] = {
         "manual_open": "Abrir ficheiro manualmente",
     },
 }
+
+# Ensure every language dictionary contains all UI keys.
+# Missing items fall back to English so widgets never show hardcoded literals.
+for _lang_code, _lang_dict in I18N.items():
+    if _lang_code == "en":
+        continue
+    for _k, _v in I18N["en"].items():
+        _lang_dict.setdefault(_k, _v)
 
 FIELD_I18N: dict[str, dict[str, str]] = {
     "it": {
@@ -1481,6 +1717,35 @@ def _estimate_eta_from_log(log_text: str) -> str | None:
     return None
 
 
+def _extract_progress_from_log(log_text: str) -> tuple[float, str] | None:
+    if not log_text:
+        return None
+    lines = [_strip_ansi(ln).strip() for ln in log_text.splitlines() if ln.strip()]
+    frame_re = re.compile(r"Frame\s+(\d+)\s*/\s*(\d+):")
+    row_re = re.compile(r"Render rows:\s*(\d+)\s*/\s*(\d+)")
+
+    for line in reversed(lines):
+        fm = frame_re.search(line)
+        if fm is not None:
+            done = max(0, int(fm.group(1)))
+            total = max(0, int(fm.group(2)))
+            if total > 0:
+                done = min(done, total)
+                ratio = float(done) / float(total)
+                return ratio, f"Frames {done}/{total} ({ratio * 100.0:.1f}%)"
+
+    for line in reversed(lines):
+        rm = row_re.search(line)
+        if rm is not None:
+            done = max(0, int(rm.group(1)))
+            total = max(0, int(rm.group(2)))
+            if total > 0:
+                done = min(done, total)
+                ratio = float(done) / float(total)
+                return ratio, f"Render rows {done}/{total} ({ratio * 100.0:.1f}%)"
+    return None
+
+
 def _tail_text_file(path: Path, max_chars: int = 120_000) -> str:
     if not path.exists():
         return ""
@@ -2079,23 +2344,294 @@ def main() -> None:
     if lang not in LANGUAGE_OPTIONS:
         lang = "it"
         st.session_state["ui_lang"] = "it"
+    if "ui_theme_mode" not in st.session_state:
+        st.session_state["ui_theme_mode"] = "auto"
+    theme_mode = str(st.session_state.get("ui_theme_mode", "auto")).lower().strip()
+    if theme_mode not in {"auto", "dark", "light"}:
+        theme_mode = "auto"
+        st.session_state["ui_theme_mode"] = "auto"
 
     st.set_page_config(page_title=tr(lang, "page_title", "KerrTrace WebUI"), layout="wide")
-    st.markdown(
-        """
-<style>
-div[data-testid="stNumberInput"] input:disabled,
-div[data-testid="stTextInput"] input:disabled {
-  background-color: #1a1f2b !important;
-  color: #9aa4b2 !important;
-  -webkit-text-fill-color: #9aa4b2 !important;
-  border: 1px solid #30384a !important;
+    dark_vars = """
+  --kt-bg: #0a0a0c;
+  --kt-surface: #141418;
+  --kt-surface-2: #1e1f25;
+  --kt-border: #343741;
+  --kt-text: #f2f3f7;
+  --kt-muted: #a4a8b3;
+  --kt-accent: #c27b2b;
+  --kt-disabled-bg: #20242c;
+  --kt-disabled-tx: #7f8694;
+  --kt-input-bg: #24262e;
+  --kt-input-disabled-bg: #181b22;
+  --kt-input-disabled-tx: #7b8392;
+  --kt-tooltip-bg: #1a1d24;
+  --kt-tooltip-text: #f2f3f7;
+"""
+    light_vars = """
+  --kt-bg: #eee8dc;
+  --kt-surface: #ffffff;
+  --kt-surface-2: #e4d8c2;
+  --kt-border: #c7b391;
+  --kt-text: #171411;
+  --kt-muted: #585046;
+  --kt-accent: #2f6df6;
+  --kt-disabled-bg: #d6c6aa;
+  --kt-disabled-tx: #5c5140;
+  --kt-input-bg: #fbf7ef;
+  --kt-input-disabled-bg: #cbb89a;
+  --kt-input-disabled-tx: #54493b;
+  --kt-tooltip-bg: #fffaf1;
+  --kt-tooltip-text: #171411;
+"""
+    if theme_mode == "dark":
+        root_block = ":root {\n" + dark_vars + "\n}"
+    elif theme_mode == "light":
+        root_block = ":root {\n" + light_vars + "\n}"
+    else:
+        root_block = (
+            ":root {\n"
+            + dark_vars
+            + "\n}\n@media (prefers-color-scheme: light) {\n  :root {\n"
+            + light_vars
+            + "\n  }\n}"
+        )
+
+    ui_css = (
+        "<style>\n"
+        + root_block
+        + """
+html, body, .stApp, [data-testid="stAppViewContainer"] {
+  background: var(--kt-bg) !important;
+  color: var(--kt-text) !important;
+}
+[data-testid="stMainBlockContainer"] {
+  background: transparent !important;
+}
+[data-testid="stHeader"] {
+  background: transparent !important;
+  border-bottom: 1px solid var(--kt-border) !important;
+}
+[data-testid="stSidebar"] {
+  background: var(--kt-surface) !important;
+  border-right: 1px solid var(--kt-border) !important;
+}
+section.main > div.block-container {
+  padding-top: 0.9rem !important;
+  padding-bottom: 1.4rem !important;
+  max-width: 1700px !important;
+}
+h1, h2, h3 {
+  letter-spacing: -0.015em;
+}
+h1, h2, h3, h4, h5, h6, p, li, label, span, div, small {
+  color: var(--kt-text);
+}
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] *,
+[data-testid="stSelectbox"] label,
+[data-testid="stNumberInput"] label,
+[data-testid="stTextInput"] label,
+[data-testid="stTextArea"] label,
+[data-testid="stSlider"] label,
+[data-testid="stCheckbox"] label,
+[data-testid="stRadio"] label,
+div[role="radiogroup"] label,
+div[role="radiogroup"] label *,
+[data-testid="stFileUploader"] label {
+  color: var(--kt-text) !important;
   opacity: 1 !important;
 }
+[data-testid="stMarkdownContainer"] * {
+  color: var(--kt-text);
+}
+
+div[data-testid="stExpander"] {
+  border: 1px solid var(--kt-border) !important;
+  border-radius: 12px !important;
+  background: var(--kt-surface) !important;
+  overflow: hidden !important;
+}
+div[data-testid="stExpander"] details {
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+div[data-testid="stExpander"] details > summary {
+  color: var(--kt-text) !important;
+  background: var(--kt-surface-2) !important;
+  border-bottom: none !important;
+  border-radius: 10px !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+div[data-testid="stExpander"] details[open] > summary {
+  background: var(--kt-surface-2) !important;
+  border-bottom: 1px solid var(--kt-border) !important;
+  border-radius: 10px 10px 0 0 !important;
+}
+div[data-testid="stExpander"] details[open] > div {
+  border-radius: 0 0 10px 10px !important;
+  overflow: hidden !important;
+}
+
+div[data-baseweb="select"] > div,
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stFileUploader"] section {
+  background: var(--kt-input-bg) !important;
+  color: var(--kt-text) !important;
+  border: 1px solid var(--kt-border) !important;
+  border-radius: 10px !important;
+}
+div[data-baseweb="select"] * {
+  color: var(--kt-text) !important;
+}
+div[data-baseweb="menu"],
+ul[role="listbox"],
+div[role="listbox"] {
+  background: var(--kt-surface) !important;
+  color: var(--kt-text) !important;
+  border: 1px solid var(--kt-border) !important;
+}
+[data-baseweb="menu"] {
+  background: transparent !important;
+}
+li[role="option"],
+div[role="option"] {
+  background: var(--kt-surface) !important;
+  color: var(--kt-text) !important;
+}
+li[role="option"][aria-selected="true"],
+div[role="option"][aria-selected="true"] {
+  background: var(--kt-surface-2) !important;
+}
+li[role="option"]:hover,
+div[role="option"]:hover {
+  background: var(--kt-surface-2) !important;
+}
+li[role="option"] *,
+div[role="option"] * {
+  color: var(--kt-text) !important;
+}
+[data-baseweb="tooltip"],
+div[role="tooltip"] {
+  background: var(--kt-tooltip-bg) !important;
+  color: var(--kt-tooltip-text) !important;
+  border: 1px solid var(--kt-border) !important;
+  max-width: min(560px, 82vw) !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  line-height: 1.35 !important;
+  padding: 0.45rem 0.6rem !important;
+  border-radius: 8px !important;
+}
+[data-baseweb="tooltip"] *,
+div[role="tooltip"] * {
+  color: var(--kt-tooltip-text) !important;
+}
+[data-testid="stTooltipIcon"] button,
+[data-testid="stTooltipIcon"] [role="button"] {
+  background: var(--kt-surface-2) !important;
+  border: 1px solid var(--kt-border) !important;
+  color: var(--kt-text) !important;
+}
+[data-testid="stTooltipIcon"] svg {
+  fill: var(--kt-text) !important;
+  stroke: var(--kt-text) !important;
+}
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stNumberInput"] input:focus,
+div[data-testid="stTextArea"] textarea:focus {
+  border-color: var(--kt-accent) !important;
+  box-shadow: 0 0 0 1px var(--kt-accent) !important;
+}
+
+div[data-testid="stNumberInput"] input:disabled,
+div[data-testid="stTextInput"] input:disabled,
+div[data-testid="stTextArea"] textarea:disabled {
+  background-color: var(--kt-input-disabled-bg) !important;
+  color: var(--kt-input-disabled-tx) !important;
+  -webkit-text-fill-color: var(--kt-input-disabled-tx) !important;
+  border: 1px solid var(--kt-border) !important;
+  opacity: 1 !important;
+}
+
+div.stButton > button {
+  background: var(--kt-surface-2) !important;
+  color: var(--kt-text) !important;
+  border-radius: 10px !important;
+  border: 1px solid var(--kt-border) !important;
+}
+button[kind="secondary"],
+button[kind="tertiary"],
+button[aria-haspopup="dialog"],
+[data-testid="stDownloadButton"] > button {
+  background: var(--kt-surface-2) !important;
+  color: var(--kt-text) !important;
+  border: 1px solid var(--kt-border) !important;
+}
+button[aria-haspopup="dialog"] *,
+[data-testid="stDownloadButton"] > button * {
+  color: var(--kt-text) !important;
+  fill: var(--kt-text) !important;
+}
+div.stButton > button[kind="primary"] {
+  background: var(--kt-accent) !important;
+  border-color: var(--kt-accent) !important;
+  color: #ffffff !important;
+}
+div.stButton > button:hover {
+  filter: brightness(1.04);
+}
+
+small, .stCaption {
+  color: var(--kt-muted) !important;
+}
+pre, code {
+  border-radius: 10px !important;
+}
+[data-testid="stCodeBlock"] pre, [data-testid="stCodeBlock"] code {
+  color: inherit !important;
+}
+[data-testid="stCodeBlock"] pre {
+  background: var(--kt-surface-2) !important;
+  border: 1px solid var(--kt-border) !important;
+}
+code {
+  background: var(--kt-surface-2) !important;
+  color: var(--kt-text) !important;
+}
+[data-testid="stFileUploader"] section {
+  background: var(--kt-input-bg) !important;
+  border: 1px solid var(--kt-border) !important;
+}
+[data-testid="stFileUploader"] button {
+  background: var(--kt-surface) !important;
+  color: var(--kt-text) !important;
+  border: 1px solid var(--kt-border) !important;
+}
+[data-testid="stCheckbox"] [role="checkbox"] {
+  background: var(--kt-surface) !important;
+  border: 1px solid var(--kt-border) !important;
+}
+[data-baseweb="radio"] > div {
+  color: var(--kt-text) !important;
+}
+div[data-testid="stNumberInput"] button,
+div[data-testid="stNumberInput"] [role="button"] {
+  background: var(--kt-input-bg) !important;
+  color: var(--kt-text) !important;
+  border-left: 1px solid var(--kt-border) !important;
+}
+div[data-testid="stNumberInput"] button svg {
+  fill: var(--kt-text) !important;
+  stroke: var(--kt-text) !important;
+}
 </style>
-        """,
-        unsafe_allow_html=True,
+"""
     )
+    st.markdown(ui_css, unsafe_allow_html=True)
     st.title(tr(lang, "title", "KerrTrace WebUI"))
     st.markdown(f"**{tr(lang, 'author_label', 'Autore')}:** `{AUTHOR_SIGNATURE}`")
     st.caption(
@@ -2129,6 +2665,12 @@ div[data-testid="stTextInput"] input:disabled {
         st.session_state["preset_locked_fields"] = []
     if "preset_loaded_name" not in st.session_state:
         st.session_state["preset_loaded_name"] = ""
+    if "pending_video_render" not in st.session_state:
+        st.session_state["pending_video_render"] = {}
+    if "bg_auto_refresh" not in st.session_state:
+        st.session_state["bg_auto_refresh"] = True
+    if "bg_auto_refresh_interval_s" not in st.session_state:
+        st.session_state["bg_auto_refresh_interval_s"] = 3
     launch_notice = str(st.session_state.get("bg_launch_notice") or "").strip()
     if launch_notice:
         st.success(launch_notice)
@@ -2181,11 +2723,11 @@ div[data-testid="stTextInput"] input:disabled {
                 st.session_state["async_meta"] = meta_next
                 async_proc = proc_next
                 async_meta = meta_next
-                st.info(f"Avviato job in coda: `{meta_next['job_id']}`")
+                st.info(f"{tr(lang, 'queued_job_started', 'Avviato job in coda')}: `{meta_next['job_id']}`")
 
     queue_entries = list(st.session_state.get("async_queue") or [])
     history_entries = list(st.session_state.get("job_history") or [])
-    with st.expander("Queue job (background)", expanded=bool(queue_entries or history_entries)):
+    with st.expander(tr(lang, "queue_job_background", "Queue job (background)"), expanded=bool(queue_entries or history_entries)):
         st.caption(
             f"Queued: {len(queue_entries)} | Running: "
             f"{1 if (async_proc is not None and async_proc.poll() is None) else 0} | "
@@ -2194,7 +2736,7 @@ div[data-testid="stTextInput"] input:disabled {
         q_col_1, q_col_2 = st.columns(2)
         with q_col_1:
             if queue_entries:
-                st.write("In coda:")
+                st.write(tr(lang, "in_queue_label", "In coda:"))
                 st.table(
                     [
                         {
@@ -2206,10 +2748,10 @@ div[data-testid="stTextInput"] input:disabled {
                     ]
                 )
             else:
-                st.caption("Nessun job in coda.")
+                st.caption(tr(lang, "no_jobs_in_queue", "Nessun job in coda."))
         with q_col_2:
             if history_entries:
-                st.write("Storico recente:")
+                st.write(tr(lang, "recent_history", "Storico recente:"))
                 st.table(
                     [
                         {
@@ -2222,86 +2764,139 @@ div[data-testid="stTextInput"] input:disabled {
                     ]
                 )
             else:
-                st.caption("Storico vuoto.")
+                st.caption(tr(lang, "history_empty", "Storico vuoto."))
         q_btn_1, q_btn_2 = st.columns(2)
         with q_btn_1:
-            if st.button("Svuota coda", key="queue_clear_pending"):
+            if st.button(tr(lang, "clear_queue", "Svuota coda"), key="queue_clear_pending"):
                 st.session_state["async_queue"] = []
                 st.rerun()
         with q_btn_2:
-            if st.button("Pulisci storico", key="queue_clear_history"):
+            if st.button(tr(lang, "clear_history", "Pulisci storico"), key="queue_clear_history"):
                 st.session_state["job_history"] = []
                 st.rerun()
 
     if async_proc is not None and isinstance(async_meta, dict) and async_meta:
-        log_path = Path(str(async_meta.get("log_path", "")))
-        workspace_async = Path(str(async_meta.get("workspace", str(Path.cwd()))))
-        out_hint = Path(str(async_meta.get("output_hint", "out/webui_frame.png")))
-        started_at = str(async_meta.get("started_at", ""))
-        elapsed_bg_s: float | None = None
+        auto_refresh_enabled = bool(st.session_state.get("bg_auto_refresh", True))
+        auto_refresh_interval_s = int(max(1, min(30, int(st.session_state.get("bg_auto_refresh_interval_s", 3)))))
+        run_every: str | None = None
         try:
-            if started_at:
-                started_dt = datetime.strptime(started_at, "%Y%m%d_%H%M%S")
-                elapsed_bg_s = max(0.0, (datetime.now() - started_dt).total_seconds())
+            if async_proc.poll() is None and auto_refresh_enabled:
+                run_every = f"{auto_refresh_interval_s}s"
         except Exception:
-            elapsed_bg_s = None
-        elapsed_bg_txt = _format_eta_short(elapsed_bg_s) if elapsed_bg_s is not None else "--:--"
-        cfg_async = str(async_meta.get("cfg_path", ""))
-        rc = async_proc.poll()
-        running = rc is None
-        with st.expander(tr(lang, "bg_job", "Job in background"), expanded=True):
-            if running:
-                st.info(
-                    f"{tr(lang, 'job_running', 'In esecuzione')} (PID {getattr(async_proc, 'pid', 'n/a')}) "
-                    f"- started: {started_at} - elapsed: {elapsed_bg_txt}"
-                )
-            else:
-                if int(rc) == 0:
-                    st.success(f"{tr(lang, 'job_completed', 'Job completato')} (exit={rc})")
-                else:
-                    st.error(f"{tr(lang, 'job_failed', 'Job terminato con errore')} (exit={rc})")
-            if cfg_async:
-                st.caption(f"{tr(lang, 'cfg_used', 'Config JSON usata:')} {cfg_async}")
-            if log_path:
-                st.caption(f"{tr(lang, 'log_label', 'Log')}: {log_path}")
-            tail_txt = _tail_text_file(log_path)
-            if tail_txt:
-                st.code(tail_txt, language="bash")
-                eta_hint = _estimate_eta_from_log(tail_txt)
-                if eta_hint:
-                    st.caption(eta_hint)
-                live_frame = _extract_latest_frame_path_from_log(tail_txt, workspace_async)
-                if live_frame is not None and live_frame.exists():
-                    st.image(str(live_frame), caption=f"Live frame preview: {live_frame.name}")
+            run_every = None
 
-            c_job_1, c_job_2 = st.columns(2)
-            with c_job_1:
+        @st.fragment(run_every=run_every)
+        def _render_background_job_fragment() -> None:
+            async_proc_local = st.session_state.get("async_proc")
+            async_meta_local = st.session_state.get("async_meta") or {}
+            if async_proc_local is None or (not isinstance(async_meta_local, dict)) or (not async_meta_local):
+                return
+
+            log_path = Path(str(async_meta_local.get("log_path", "")))
+            workspace_async = Path(str(async_meta_local.get("workspace", str(Path.cwd()))))
+            out_hint = Path(str(async_meta_local.get("output_hint", "out/webui_frame.png")))
+            started_at = str(async_meta_local.get("started_at", ""))
+            elapsed_bg_s: float | None = None
+            try:
+                if started_at:
+                    started_dt = datetime.strptime(started_at, "%Y%m%d_%H%M%S")
+                    elapsed_bg_s = max(0.0, (datetime.now() - started_dt).total_seconds())
+            except Exception:
+                elapsed_bg_s = None
+            elapsed_bg_txt = _format_eta_short(elapsed_bg_s) if elapsed_bg_s is not None else "--:--"
+            cfg_async = str(async_meta_local.get("cfg_path", ""))
+            rc = async_proc_local.poll()
+            running = rc is None
+
+            with st.expander(tr(lang, "bg_job", "Job in background"), expanded=True):
+                r1, r2 = st.columns(2)
+                with r1:
+                    st.checkbox(
+                        tr(lang, "auto_refresh_monitor", "Auto-refresh monitor"),
+                        key="bg_auto_refresh",
+                    )
+                with r2:
+                    st.number_input(
+                        tr(lang, "auto_refresh_interval_sec", "Intervallo auto-refresh (s)"),
+                        min_value=1,
+                        max_value=30,
+                        step=1,
+                        key="bg_auto_refresh_interval_s",
+                    )
+
+                if running and bool(st.session_state.get("bg_auto_refresh", True)):
+                    refresh_s = int(max(1, min(30, int(st.session_state.get("bg_auto_refresh_interval_s", 3)))))
+                    st.caption(
+                        tr(
+                            lang,
+                            "auto_refresh_active_every",
+                            "Auto-refresh attivo: aggiornamento ogni {seconds}s.",
+                        ).format(seconds=refresh_s)
+                    )
+
                 if running:
-                    if st.button(tr(lang, "refresh_monitor", "Aggiorna monitor")):
-                        st.rerun()
-            with c_job_2:
-                if running and st.button(tr(lang, "stop_job", "Interrompi job")):
-                    try:
-                        async_proc.terminate()
-                    except Exception:
-                        pass
-                    st.rerun()
-
-            if not running:
-                out_file = _resolve_output_file(
-                    log_text=tail_txt,
-                    workspace_path=workspace_async,
-                    out_hint=out_hint,
-                )
-                if out_file is not None and out_file.exists():
-                    st.session_state["last_output_path"] = str(out_file)
-                    _show_output_media(out_file)
+                    st.info(
+                        f"{tr(lang, 'job_running', 'In esecuzione')} (PID {getattr(async_proc_local, 'pid', 'n/a')}) "
+                        f"- started: {started_at} - elapsed: {elapsed_bg_txt}"
+                    )
                 else:
-                    st.warning(tr(lang, "output_not_found_auto", "Output non trovato automaticamente. Controlla il path nel log."))
-                if st.button(tr(lang, "clear_job", "Pulisci stato job")):
-                    st.session_state["async_proc"] = None
-                    st.session_state["async_meta"] = {}
-                    st.rerun()
+                    if int(rc) == 0:
+                        st.success(f"{tr(lang, 'job_completed', 'Job completato')} (exit={rc})")
+                    else:
+                        st.error(f"{tr(lang, 'job_failed', 'Job terminato con errore')} (exit={rc})")
+                if cfg_async:
+                    st.caption(f"{tr(lang, 'cfg_used', 'Config JSON usata:')} {cfg_async}")
+                if log_path:
+                    st.caption(f"{tr(lang, 'log_label', 'Log')}: {log_path}")
+                tail_txt = _tail_text_file(log_path)
+                if tail_txt:
+                    progress_hint = _extract_progress_from_log(tail_txt)
+                    if progress_hint is not None:
+                        ratio, progress_label = progress_hint
+                        st.progress(float(ratio), text=progress_label)
+                    elif running:
+                        st.progress(0.0, text=tr(lang, "render_rows_initial", "Render rows: 0/0 (0.0%)"))
+                    st.code(tail_txt, language="bash")
+                    eta_hint = _estimate_eta_from_log(tail_txt)
+                    if eta_hint:
+                        st.caption(eta_hint)
+                    live_frame = _extract_latest_frame_path_from_log(tail_txt, workspace_async)
+                    if live_frame is not None and live_frame.exists():
+                        st.image(
+                            str(live_frame),
+                            caption=f"{tr(lang, 'live_frame_preview', 'Live frame preview')}: {live_frame.name}",
+                        )
+
+                c_job_1, c_job_2 = st.columns(2)
+                with c_job_1:
+                    if running:
+                        if st.button(tr(lang, "refresh_monitor", "Aggiorna monitor"), key="refresh_monitor_running"):
+                            st.rerun()
+                with c_job_2:
+                    if running and st.button(tr(lang, "stop_job", "Interrompi job"), key="stop_job_running"):
+                        try:
+                            async_proc_local.terminate()
+                        except Exception:
+                            pass
+                        st.rerun()
+
+                if not running:
+                    out_file = _resolve_output_file(
+                        log_text=tail_txt,
+                        workspace_path=workspace_async,
+                        out_hint=out_hint,
+                    )
+                    if out_file is not None and out_file.exists():
+                        st.session_state["last_output_path"] = str(out_file)
+                        _show_output_media(out_file)
+                    else:
+                        st.warning(tr(lang, "output_not_found_auto", "Output non trovato automaticamente. Controlla il path nel log."))
+                    if st.button(tr(lang, "clear_job", "Pulisci stato job"), key="clear_job_done"):
+                        st.session_state["async_proc"] = None
+                        st.session_state["async_meta"] = {}
+                        st.rerun()
+
+        _render_background_job_fragment()
 
     default_cfg = asdict(RenderConfig())
     supports_adaptive_spatial = "adaptive_spatial_sampling" in default_cfg
@@ -2321,6 +2916,18 @@ div[data-testid="stTextInput"] input:disabled {
             key="ui_lang",
             format_func=lambda code: LANGUAGE_OPTIONS.get(code, code),
         )
+        theme_options = ["auto", "dark", "light"]
+        theme_labels = {
+            "auto": tr(lang, "theme_auto", "Auto (browser/system)"),
+            "dark": tr(lang, "theme_dark", "Dark"),
+            "light": tr(lang, "theme_light", "Light"),
+        }
+        st.selectbox(
+            tr(lang, "theme_label", "Tema UI"),
+            options=theme_options,
+            key="ui_theme_mode",
+            format_func=lambda code: theme_labels.get(code, code),
+        )
         lang = str(st.session_state.get("ui_lang", "it"))
         python_exec = st.text_input(tfield(lang, "Python executable"), value=_default_python())
         workspace = st.text_input(tr(lang, "workspace_label", "Workspace"), value=str(Path.cwd()))
@@ -2339,24 +2946,24 @@ div[data-testid="stTextInput"] input:disabled {
         workspace_sidebar = Path(workspace).expanduser().resolve()
         preset_files = _list_presets(workspace_sidebar)
         preset_options = [""] + [p.stem for p in preset_files]
-        with st.expander("Preset manager", expanded=False):
+        with st.expander(tr(lang, "preset_manager", "Preset manager"), expanded=False):
             if st.session_state.get("preset_loaded_name"):
                 st.caption(
-                    f"Preset attivo: `{st.session_state.get('preset_loaded_name')}` | "
+                    f"{tr(lang, 'preset_active', 'Preset attivo')}: `{st.session_state.get('preset_loaded_name')}` | "
                     f"lock={bool(st.session_state.get('preset_lock_active', False))}"
                 )
             preset_to_load = st.selectbox(
-                "Load preset",
+                tr(lang, "load_preset", "Load preset"),
                 options=preset_options,
-                format_func=lambda name: "(none)" if not name else name,
+                format_func=lambda name: tr(lang, "preset_none", "(none)") if not name else name,
                 key="preset_to_load_select",
             )
             lock_on_load = st.checkbox(
-                "Lock critical fields on load",
+                tr(lang, "lock_critical_fields_on_load", "Lock critical fields on load"),
                 value=bool(st.session_state.get("preset_lock_active", False)),
                 key="preset_lock_on_load",
             )
-            if st.button("Load selected preset", disabled=(not preset_to_load), key="preset_load_btn"):
+            if st.button(tr(lang, "load_selected_preset", "Load selected preset"), disabled=(not preset_to_load), key="preset_load_btn"):
                 try:
                     preset_path = next(p for p in preset_files if p.stem == preset_to_load)
                     cfg_payload, meta_payload = _load_preset(preset_path)
@@ -2375,20 +2982,20 @@ div[data-testid="stTextInput"] input:disabled {
                         st.session_state["preset_lock_active"] = False
                         st.session_state["preset_locked_fields"] = []
                         st.session_state["preset_locked_values"] = {}
-                    st.success(f"Preset caricato: {preset_to_load}")
+                    st.success(f"{tr(lang, 'preset_loaded', 'Preset caricato')}: {preset_to_load}")
                     st.rerun()
                 except Exception as exc:
-                    st.error(f"Errore load preset: {exc}")
-            if st.button("Unlock preset critical fields", key="preset_unlock_btn"):
+                    st.error(f"{tr(lang, 'preset_load_error', 'Errore load preset')}: {exc}")
+            if st.button(tr(lang, "unlock_preset_critical_fields", "Unlock preset critical fields"), key="preset_unlock_btn"):
                 st.session_state["preset_lock_active"] = False
                 st.session_state["preset_locked_fields"] = []
                 st.session_state["preset_locked_values"] = {}
                 st.rerun()
             st.divider()
-            preset_save_name = st.text_input("Preset name", value="")
-            preset_save_tags_raw = st.text_input("Preset tags (comma separated)", value="")
-            preset_save_lock_fields = st.checkbox("Store critical lock fields", value=True)
-            save_preset_requested = st.button("Save preset", key="preset_save_btn")
+            preset_save_name = st.text_input(tr(lang, "preset_name", "Preset name"), value="")
+            preset_save_tags_raw = st.text_input(tr(lang, "preset_tags_comma", "Preset tags (comma separated)"), value="")
+            preset_save_lock_fields = st.checkbox(tr(lang, "store_critical_lock_fields", "Store critical lock fields"), value=True)
+            save_preset_requested = st.button(tr(lang, "save_preset", "Save preset"), key="preset_save_btn")
 
     preset_cfg = st.session_state.get("preset_loaded_cfg") or {}
     if isinstance(preset_cfg, dict) and preset_cfg:
@@ -2612,7 +3219,7 @@ div[data-testid="stTextInput"] input:disabled {
             disabled=(not bool(metric_model)),
         )
         if metric_model == "morris_thorne":
-            st.caption("Per Morris-Thorne è disponibile solo la coordinata in variabile areolare.")
+            st.caption(tr(lang, "morris_thorne_areolar_only", "Per Morris-Thorne è disponibile solo la coordinata in variabile areolare."))
         supports_spin, supports_charge, supports_lambda = _metric_supports_parameters(metric_model)
     with c2:
         spin_default = max(-1.0, min(1.0, float(cfg_seed["spin"])))
@@ -2679,7 +3286,7 @@ div[data-testid="stTextInput"] input:disabled {
         if not supports_lambda:
             disabled_labels.append("lambda")
         if disabled_labels:
-            st.caption(f"Parametri non usati dalla metrica selezionata: {', '.join(disabled_labels)}.")
+            st.caption(f"{tr(lang, 'unused_metric_params', 'Parametri non usati dalla metrica selezionata')}: {', '.join(disabled_labels)}.")
         disk_model = st.selectbox(
             tfield(lang, "Disk model"),
             options=CHOICE_FIELDS["disk_model"],
@@ -2735,7 +3342,7 @@ div[data-testid="stTextInput"] input:disabled {
             tfield(lang, "Enable layered disk"),
             value=bool(cfg_seed.get("disk_layered_palette", False)),
         )
-        with st.expander("Opzioni disco stratificato", expanded=bool(disk_layered_palette)):
+        with st.expander(tr(lang, "layered_disk_options", "Opzioni disco stratificato"), expanded=bool(disk_layered_palette)):
             disk_layer_count = st.number_input(
                 tfield(lang, "Layer count"),
                 min_value=2,
@@ -2809,7 +3416,7 @@ div[data-testid="stTextInput"] input:disabled {
             "v2_visibility": "v2 visibility",
             "v3_robust": "v3 robust",
         }
-        with st.expander("Opzioni rotazione differenziale", expanded=bool(disk_diffrot_enabled)):
+        with st.expander(tr(lang, "differential_rotation_options", "Opzioni rotazione differenziale"), expanded=bool(disk_diffrot_enabled)):
             disk_diffrot_model = st.selectbox(
                 tfield(lang, "Differential rotation model"),
                 options=CHOICE_FIELDS["disk_diffrot_model"],
@@ -2888,7 +3495,7 @@ div[data-testid="stTextInput"] input:disabled {
             tfield(lang, "Continuous disk volume emission"),
             value=bool(cfg_seed.get("disk_volume_emission", False)),
         )
-        with st.expander("Opzioni volume emission", expanded=bool(disk_volume_emission)):
+        with st.expander(tr(lang, "volume_emission_options", "Opzioni volume emission"), expanded=bool(disk_volume_emission)):
             disk_volume_samples = st.number_input(
                 tfield(lang, "Disk volume samples"),
                 min_value=1,
@@ -2965,7 +3572,7 @@ div[data-testid="stTextInput"] input:disabled {
             help=tfield(lang, "manual: custom bar; tqdm: tqdm bar; auto: use tqdm when available"),
         )
     with d4:
-        with st.expander("Kernel & camera", expanded=False):
+        with st.expander(tr(lang, "kernel_camera_options", "Kernel & camera"), expanded=False):
             mps_optimized_kernel = st.checkbox(tfield(lang, "MPS optimized kernel"), value=bool(cfg_seed["mps_optimized_kernel"]))
             mps_auto_chunking = st.checkbox(tfield(lang, "MPS auto chunking"), value=bool(cfg_seed.get("mps_auto_chunking", True)))
             compile_rhs = st.checkbox(tfield(lang, "Compile RHS"), value=bool(cfg_seed["compile_rhs"]))
@@ -2987,7 +3594,7 @@ div[data-testid="stTextInput"] input:disabled {
                 "wormhole_mt_sky_sample_from_xyz",
             )
         )
-        with st.expander("Morris-Thorne seam fixes", expanded=bool(mt_metric_active and mt_any_enabled)):
+        with st.expander(tr(lang, "morris_thorne_seam_fixes", "Morris-Thorne seam fixes"), expanded=bool(mt_metric_active and mt_any_enabled)):
             wormhole_mt_force_reference_trace = st.checkbox(
                 "Morris-Thorne: force robust tracer",
                 value=bool(cfg_seed.get("wormhole_mt_force_reference_trace", False)),
@@ -3014,7 +3621,7 @@ div[data-testid="stTextInput"] input:disabled {
             )
 
         roi_expanded = bool(cfg_seed.get("roi_supersampling", False) or cfg_seed.get("quality_lock", False))
-        with st.expander("ROI, quality & cache", expanded=roi_expanded):
+        with st.expander(tr(lang, "roi_quality_cache_options", "ROI, quality & cache"), expanded=roi_expanded):
             roi_supersampling = st.checkbox(
                 tfield(lang, "ROI supersampling"),
                 value=bool(cfg_seed.get("roi_supersampling", False)),
@@ -3097,7 +3704,7 @@ div[data-testid="stTextInput"] input:disabled {
                 disabled=(not quality_lock),
             )
 
-        with st.expander("Encoding, adaptive & postprocess", expanded=False):
+        with st.expander(tr(lang, "encoding_adaptive_postprocess", "Encoding, adaptive & postprocess"), expanded=False):
             animation_workers = st.number_input(
                 tfield(lang, "Animation workers"),
                 min_value=1,
@@ -3321,7 +3928,7 @@ div[data-testid="stTextInput"] input:disabled {
             disabled=(not is_hdri),
         )
         if metric_model == "morris_thorne":
-            with st.expander("Wormhole remote background", expanded=True):
+            with st.expander(tr(lang, "wormhole_remote_background", "Wormhole remote background"), expanded=True):
                 wormhole_remote_hdri_path = st.text_input(
                     tfield(lang, "Wormhole remote HDRI path"),
                     value=wormhole_remote_hdri_path,
@@ -3407,9 +4014,9 @@ div[data-testid="stTextInput"] input:disabled {
             video_params["spatial_jitter"] = st.checkbox(tfield(lang, "Spatial jitter"), value=False)
             video_params["stream_encode"] = st.checkbox(tfield(lang, "Stream encode"), value=True)
             video_params["adaptive_frame_steps"] = st.checkbox(tfield(lang, "Adaptive frame steps"), value=True)
-            video_params["live_frame_preview"] = st.checkbox("Live frame preview", value=True)
-            video_params["keep_frames"] = st.checkbox("Keep frames (resume/preview)", value=True)
-            video_params["resume_frames"] = st.checkbox("Resume from existing frames", value=False)
+            video_params["live_frame_preview"] = st.checkbox(tr(lang, "live_frame_preview", "Live frame preview"), value=True)
+            video_params["keep_frames"] = st.checkbox(tr(lang, "keep_frames_resume_preview", "Keep frames (resume/preview)"), value=True)
+            video_params["resume_frames"] = st.checkbox(tr(lang, "resume_from_existing_frames", "Resume from existing frames"), value=False)
             video_params["adaptive_frame_steps_min_scale"] = st.number_input(
                 tfield(lang, "Adaptive min scale"),
                 min_value=0.1,
@@ -3421,7 +4028,7 @@ div[data-testid="stTextInput"] input:disabled {
             loaded_cfg.get("frames_dir")
             or (workspace_path_preview / "out" / "webui_runs" / f"frames_{Path(str(output_path)).stem}")
         )
-        video_params["frames_dir"] = st.text_input("Frames directory", value=default_frames_dir)
+        video_params["frames_dir"] = st.text_input(tr(lang, "frames_directory", "Frames directory"), value=default_frames_dir)
 
     starship_params: dict[str, Any] = {}
     starship_video_params: dict[str, Any] = {}
@@ -3598,7 +4205,7 @@ div[data-testid="stTextInput"] input:disabled {
     patch_default = "{}"
     if hasattr(st, "popover"):
         # Compact icon-based access to keep the main layout clean.
-        with st.popover("🧩 JSON", use_container_width=False):
+        with st.popover(f"🧩 {tr(lang, 'json_patch_short', 'JSON')}", use_container_width=False):
             st.caption(patch_caption)
             st.write(patch_help)
             patch_text = st.text_area(tfield(lang, "JSON patch"), value=patch_default, height=220)
@@ -3725,36 +4332,76 @@ div[data-testid="stTextInput"] input:disabled {
     with run_col:
         run_now_live = st.button(tr(lang, "run_live", "Lancia simulazione (live)"), type="primary")
         run_now_bg = st.button(tr(lang, "run_bg", "Lancia in background"))
-        run_ab_compare = st.button("Run A/B compare (quick frame)")
-        preflight_enabled = st.checkbox("Preflight fisico automatico", value=True)
+        run_ab_compare = st.button(tr(lang, "run_ab_compare_quick", "Run A/B compare (quick frame)"))
+        preflight_enabled = st.checkbox(tr(lang, "preflight_auto", "Preflight fisico automatico"), value=True)
         dryrun_enabled = st.checkbox(
-            "Dry-run 256p gate prima del video",
+            tr(lang, "dryrun_gate_before_video", "Dry-run 256p gate prima del video"),
             value=True,
             disabled=(mode != "video"),
         )
         autotune_enabled = st.checkbox(
-            "Autotune device/tiling (quick benchmark)",
+            tr(lang, "autotune_quick_benchmark", "Autotune device/tiling (quick benchmark)"),
             value=False,
             disabled=(mode in {"starship_frame", "starship_video"}),
         )
-        with st.expander("A/B compare settings", expanded=False):
-            ab_compare_width = st.number_input("A/B width", min_value=128, max_value=1920, value=512, step=32)
-            ab_compare_max_steps = st.number_input("A/B max_steps", min_value=64, max_value=4000, value=320, step=16)
-            ab_patch_a_text = st.text_area("A patch JSON", value="{}", height=100)
-            ab_patch_b_text = st.text_area("B patch JSON", value='{"disk_emission_gain": 3.0}', height=100)
+        with st.expander(tr(lang, "ab_compare_settings", "A/B compare settings"), expanded=False):
+            ab_compare_width = st.number_input(tr(lang, "ab_width", "A/B width"), min_value=128, max_value=1920, value=512, step=32)
+            ab_compare_max_steps = st.number_input(tr(lang, "ab_max_steps", "A/B max_steps"), min_value=64, max_value=4000, value=320, step=16)
+            ab_patch_a_text = st.text_area(tr(lang, "ab_patch_a_json", "A patch JSON"), value="{}", height=100)
+            ab_patch_b_text = st.text_area(tr(lang, "ab_patch_b_json", "B patch JSON"), value='{"disk_emission_gain": 3.0}', height=100)
+    if run_now_live or run_now_bg or run_ab_compare:
+        st.session_state["pending_video_render"] = {}
+
+    pending_video_payload = st.session_state.get("pending_video_render")
+    confirm_pending_video = False
+    cancel_pending_video = False
+    if mode == "video" and isinstance(pending_video_payload, dict) and pending_video_payload:
+        with st.expander(tr(lang, "pending_video_ready", "Dry-run superato. Render video pronto."), expanded=True):
+            st.success(tr(lang, "pending_video_ready", "Dry-run superato. Render video pronto."))
+            st.caption(tr(lang, "pending_video_confirm_hint", "Conferma per avviare il render completo con questo JSON."))
+            launch_mode_txt = str(pending_video_payload.get("launch_mode", "live")).strip().lower()
+            launch_mode_label = (
+                tr(lang, "pending_video_bg", "background")
+                if launch_mode_txt == "bg"
+                else tr(lang, "pending_video_live", "live")
+            )
+            st.caption(f"{tr(lang, 'pending_video_mode_label', 'Modalità lancio')}: {launch_mode_label}")
+            cmd_preview = list(pending_video_payload.get("cmd") or [])
+            if cmd_preview:
+                st.code(" ".join(str(x) for x in cmd_preview), language="bash")
+            c_confirm, c_cancel = st.columns(2)
+            with c_confirm:
+                confirm_pending_video = st.button(
+                    tr(lang, "pending_video_confirm", "Conferma render video"),
+                    key="pending_video_confirm_btn",
+                    type="primary",
+                )
+            with c_cancel:
+                cancel_pending_video = st.button(
+                    tr(lang, "pending_video_cancel", "Annulla render pendente"),
+                    key="pending_video_cancel_btn",
+                )
+    if cancel_pending_video:
+        st.session_state["pending_video_render"] = {}
+        st.rerun()
     with preview_col:
         preview_json = json.dumps(config_dict, indent=2)
         if hasattr(st, "popover"):
-            with st.popover("🧾 Config JSON", use_container_width=False):
+            with st.popover(f"🧾 {tr(lang, 'config_json', 'Config JSON')}", use_container_width=False):
                 st.code(preview_json, language="json")
         else:
-            with st.expander("🧾 Config JSON", expanded=False):
+            with st.expander(f"🧾 {tr(lang, 'config_json', 'Config JSON')}", expanded=False):
                 st.code(preview_json, language="json")
+
+    # Keep live execution feedback near run controls so it is always visible.
+    live_progress_slot = st.empty()
+    live_log_slot = st.empty()
+    live_frame_slot = st.empty()
 
     if save_preset_requested:
         save_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(preset_save_name or "").strip()).strip("._-")
         if not save_name:
-            st.error("Preset name vuoto o non valido.")
+            st.error(tr(lang, "preset_name_invalid", "Preset name vuoto o non valido."))
         else:
             workspace_path_for_preset = Path(workspace).expanduser().resolve()
             preset_path = _preset_dir(workspace_path_for_preset) / f"{save_name}.json"
@@ -3767,11 +4414,113 @@ div[data-testid="stTextInput"] input:disabled {
                     tags=tags,
                     critical_fields=critical_fields,
                 )
-                st.success(f"Preset salvato: {preset_path}")
+                st.success(f"{tr(lang, 'preset_saved', 'Preset salvato')}: {preset_path}")
             except Exception as exc:
-                st.error(f"Errore salvataggio preset: {exc}")
+                st.error(f"{tr(lang, 'preset_save_error', 'Errore salvataggio preset')}: {exc}")
 
-    if not run_now_live and not run_now_bg and (not run_ab_compare):
+    if not run_now_live and not run_now_bg and (not run_ab_compare) and (not confirm_pending_video):
+        return
+
+    if confirm_pending_video:
+        pending = dict(st.session_state.get("pending_video_render") or {})
+        st.session_state["pending_video_render"] = {}
+        cmd = [str(x) for x in list(pending.get("cmd") or [])]
+        cfg_path_raw = str(pending.get("cfg_path") or "").strip()
+        workspace_raw = str(pending.get("workspace_path") or "").strip()
+        output_raw = str(pending.get("output_path") or pending.get("output_hint") or "").strip()
+        launch_mode = str(pending.get("launch_mode") or "live").strip().lower()
+        if (not cmd) or (not cfg_path_raw) or (not workspace_raw):
+            st.error(tr(lang, "pending_video_missing", "Configurazione video pendente non valida o incompleta."))
+            return
+
+        workspace_path = Path(workspace_raw).expanduser().resolve()
+        cfg_path = Path(cfg_path_raw).expanduser()
+        if not cfg_path.is_absolute():
+            cfg_path = (workspace_path / cfg_path).resolve()
+        output_hint = Path(output_raw) if output_raw else Path("out/webui_video.mp4")
+        run_dir = workspace_path / "out" / "webui_runs"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        st.info(tr(lang, "cmd_launched", "Comando lanciato:"))
+        st.code(" ".join(cmd), language="bash")
+        st.info(f"{tr(lang, 'cfg_used', 'Config JSON usata')}: {cfg_path}")
+
+        if launch_mode == "bg":
+            counter = int(st.session_state.get("job_counter", 0)) + 1
+            st.session_state["job_counter"] = counter
+            job_id = f"job_{counter:04d}"
+            log_path = run_dir / f"run_{stamp}_{job_id}.log"
+            queue_entry = {
+                "job_id": job_id,
+                "stamp": stamp,
+                "cmd": list(cmd),
+                "workspace": str(workspace_path),
+                "log_path": str(log_path),
+                "cfg_path": str(cfg_path),
+                "output_hint": str(output_hint),
+            }
+            existing_proc = st.session_state.get("async_proc")
+            if existing_proc is not None and existing_proc.poll() is None:
+                queued = list(st.session_state.get("async_queue") or [])
+                queued.append(queue_entry)
+                st.session_state["async_queue"] = queued
+                st.session_state["bg_launch_notice"] = (
+                    f"{tr(lang, 'job_queued', 'Job accodato')}: `{job_id}` "
+                    f"({tr(lang, 'position', 'posizione')} {len(queued)}). "
+                    f"{tr(lang, 'open_queue_panel_to_monitor', 'Apri il pannello queue per monitorare.')}"
+                )
+                st.rerun()
+            proc, meta = _launch_background_process(
+                cmd=list(cmd),
+                workspace_path=workspace_path,
+                log_path=log_path,
+                cfg_path=cfg_path,
+                output_hint=str(output_hint),
+                stamp=stamp,
+                job_id=job_id,
+            )
+            st.session_state["async_proc"] = proc
+            st.session_state["async_meta"] = meta
+            st.session_state["bg_launch_notice"] = (
+                f"{tr(lang, 'job_started_background', 'Job avviato in background')} "
+                f"(PID {proc.pid}, id {job_id}). "
+                f"{tr(lang, 'open_panel_to_monitor', 'Apri il pannello')} "
+                f"'{tr(lang, 'bg_job', 'Job in background')}' "
+                f"{tr(lang, 'to_monitor', 'per monitorarlo')}."
+            )
+            st.rerun()
+
+        progress_widget = live_progress_slot.progress(0.0, text=tr(lang, "render_rows_initial", "Render rows: 0/0 (0.0%)"))
+        log_placeholder = live_log_slot
+        frame_preview_placeholder = live_frame_slot
+        rc, log_text = _run_command_live(
+            cmd,
+            workspace_path,
+            log_placeholder,
+            progress_widget,
+            frame_preview_placeholder=frame_preview_placeholder,
+        )
+        log_path = run_dir / f"run_{stamp}_confirm.log"
+        log_path.write_text(log_text, encoding="utf-8")
+        if rc == 0:
+            progress_widget.progress(1.0, text=tr(lang, "render_rows_completed", "Render rows: completed (100.0%)"))
+            st.success(f"{tr(lang, 'sim_completed', 'Simulazione completata. Log')}: {log_path}")
+        else:
+            progress_widget.empty()
+            st.error(f"{tr(lang, 'sim_failed', 'Simulazione fallita')} (exit={rc}). Log: {log_path}")
+            return
+
+        out_file = _resolve_output_file(
+            log_text=log_text,
+            workspace_path=workspace_path,
+            out_hint=output_hint,
+        )
+        if out_file is None or (not out_file.exists()):
+            st.warning(f"{tr(lang, 'output_not_found_expected', 'Output non trovato automaticamente. Atteso')}: {output_hint}")
+            return
+        st.session_state["last_output_path"] = str(out_file)
+        _show_output_media(out_file)
         return
 
     try:
@@ -3791,7 +4540,8 @@ div[data-testid="stTextInput"] input:disabled {
         locked_fields = list(st.session_state.get("preset_locked_fields") or [])
         if locked_fields:
             st.caption(
-                "Preset lock active on critical fields: "
+                tr(lang, "preset_lock_active_critical", "Preset lock active on critical fields")
+                + ": "
                 + ", ".join(str(x) for x in locked_fields)
             )
 
@@ -3802,10 +4552,10 @@ div[data-testid="stTextInput"] input:disabled {
             video_params=video_params,
         )
         for wmsg in pre_warnings:
-            st.warning(f"Preflight: {wmsg}")
+            st.warning(f"{tr(lang, 'preflight_prefix', 'Preflight')}: {wmsg}")
         if pre_errors:
             for emsg in pre_errors:
-                st.error(f"Preflight: {emsg}")
+                st.error(f"{tr(lang, 'preflight_prefix', 'Preflight')}: {emsg}")
             st.stop()
 
     workspace_path = Path(workspace).expanduser().resolve()
@@ -3814,14 +4564,14 @@ div[data-testid="stTextInput"] input:disabled {
 
     if run_ab_compare:
         if mode in {"starship_frame", "starship_video"}:
-            st.error("A/B compare rapido supportato solo per single_frame/video (kerrtrace).")
+            st.error(tr(lang, "ab_compare_only_single_video", "A/B compare rapido supportato solo per single_frame/video (kerrtrace)."))
             st.stop()
-        with st.expander("A/B compare result", expanded=True):
+        with st.expander(tr(lang, "ab_compare_result", "A/B compare result"), expanded=True):
             try:
                 patch_a = _parse_patch(str(ab_patch_a_text))
                 patch_b = _parse_patch(str(ab_patch_b_text))
             except Exception as exc:
-                st.error(f"A/B patch JSON non valido: {exc}")
+                st.error(f"{tr(lang, 'ab_patch_json_invalid', 'A/B patch JSON non valido')}: {exc}")
                 st.stop()
 
             stamp_ab = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3840,7 +4590,7 @@ div[data-testid="stTextInput"] input:disabled {
                 try:
                     case_cfg = replace(RenderConfig(), **case_dict).validated()
                 except Exception as exc:
-                    st.error(f"Configurazione A/B {label} non valida: {exc}")
+                    st.error(f"{tr(lang, 'ab_config_invalid', 'Configurazione A/B non valida')} ({label}): {exc}")
                     st.stop()
                 ab_w = int(ab_compare_width)
                 ab_h = max(96, int(round(float(case_cfg.height) * (float(ab_w) / max(1.0, float(case_cfg.width))))))
@@ -3893,25 +4643,26 @@ div[data-testid="stTextInput"] input:disabled {
                     faster = "A" if t_a < t_b else "B"
                     speedup = (max(t_a, t_b) / min(t_a, t_b)) if min(t_a, t_b) > 0.0 else float("inf")
                     st.info(
-                        f"Faster case: {faster} | speedup: {speedup:.3f}x "
+                        f"{tr(lang, 'ab_faster_case', 'Faster case')}: {faster} | "
+                        f"{tr(lang, 'ab_speedup', 'speedup')}: {speedup:.3f}x "
                         f"(A={t_a:.3f}s, B={t_b:.3f}s)"
                     )
 
             c_a, c_b = st.columns(2)
             for col, row in zip([c_a, c_b], results):
                 with col:
-                    st.caption(f"Case {row['label']}")
+                    st.caption(f"{tr(lang, 'ab_case', 'Case')} {row['label']}")
                     if bool(row["ok"]) and Path(str(row["output"])).exists():
                         st.image(str(row["output"]), caption=str(row["output"]))
                     else:
-                        st.error(f"Case {row['label']} failed")
+                        st.error(f"{tr(lang, 'ab_case', 'Case')} {row['label']} {tr(lang, 'failed', 'failed')}")
                         if row.get("log_tail"):
                             st.code(str(row["log_tail"]), language="bash")
             st.stop()
 
     if autotune_enabled and mode in {"single_frame", "video"}:
-        with st.expander("Autotune benchmark", expanded=True):
-            st.caption("Benchmark rapido su frame ridotto per selezionare device e tiling più efficienti.")
+        with st.expander(tr(lang, "autotune_benchmark", "Autotune benchmark"), expanded=True):
+            st.caption(tr(lang, "autotune_benchmark_caption", "Benchmark rapido su frame ridotto per selezionare device e tiling più efficienti."))
             tuned_cfg, tune_report = _autotune_quick_device_and_tiling(
                 python_exec=str(python_exec),
                 workspace_path=workspace_path,
@@ -3933,12 +4684,13 @@ div[data-testid="stTextInput"] input:disabled {
                 )
             if tuned_cfg != cfg_obj:
                 st.success(
-                    f"Autotune applicato: device={tuned_cfg.device}, render_tile_rows={tuned_cfg.render_tile_rows}, "
+                    f"{tr(lang, 'autotune_applied', 'Autotune applicato')}: "
+                    f"device={tuned_cfg.device}, render_tile_rows={tuned_cfg.render_tile_rows}, "
                     f"mps_optimized_kernel={tuned_cfg.mps_optimized_kernel}"
                 )
                 cfg_obj = tuned_cfg
             else:
-                st.warning("Autotune non ha trovato un profilo migliore; mantengo la configurazione corrente.")
+                st.warning(tr(lang, "autotune_not_better", "Autotune non ha trovato un profilo migliore; mantengo la configurazione corrente."))
 
     allocated_output, allocated_idx = _reserve_progressive_output_path(
         workspace_path=workspace_path,
@@ -3946,7 +4698,7 @@ div[data-testid="stTextInput"] input:disabled {
     )
     if allocated_idx is not None:
         cfg_obj = replace(cfg_obj, output=str(allocated_output))
-        st.caption(f"Output progressivo allocato: `{cfg_obj.output}` (#{allocated_idx:06d})")
+        st.caption(f"{tr(lang, 'progressive_output_allocated', 'Output progressivo allocato')}: `{cfg_obj.output}` (#{allocated_idx:06d})")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg_path = run_dir / f"config_{stamp}.json"
@@ -3955,22 +4707,22 @@ div[data-testid="stTextInput"] input:disabled {
     if mode in {"starship_frame", "starship_video"}:
         script_path = workspace_path / "scripts" / "render_obj_starship_video.py"
         if not script_path.exists():
-            st.error(f"Script non trovato: {script_path}")
+            st.error(f"{tr(lang, 'script_not_found', 'Script non trovato')}: {script_path}")
             return
         obj_raw = str(starship_params.get("obj_path") or "").strip()
         if not obj_raw:
-            st.error("OBJ model path è obbligatorio in modalità Starship.")
+            st.error(tr(lang, "obj_model_required_starship", "OBJ model path è obbligatorio in modalità Starship."))
             return
         obj_path = Path(obj_raw).expanduser()
         if not obj_path.is_absolute():
             obj_path = workspace_path / obj_path
         obj_path = obj_path.resolve()
         if not obj_path.exists():
-            st.error(f"OBJ non trovato: {obj_path}")
+            st.error(f"{tr(lang, 'obj_not_found', 'OBJ non trovato')}: {obj_path}")
             return
 
         if require_gpu and device == "cpu":
-            st.error("Richiesta GPU attiva: imposta device su auto/mps/cuda (non cpu).")
+            st.error(tr(lang, "gpu_required_not_cpu", "Richiesta GPU attiva: imposta device su auto/mps/cuda (non cpu)."))
             return
 
         program_raw = str(starship_params.get("ship_program_json") or "").strip()
@@ -3981,7 +4733,7 @@ div[data-testid="stTextInput"] input:disabled {
             if not isinstance(thrust_program_payload, list):
                 raise ValueError("ship thrust program must be a JSON list")
         except Exception as exc:
-            st.error(f"Ship thrust program JSON non valido: {exc}")
+            st.error(f"{tr(lang, 'ship_program_json_invalid', 'Ship thrust program JSON non valido')}: {exc}")
             return
 
         multi_ship_raw = str(starship_params.get("multi_ship_config_json") or "").strip()
@@ -3995,7 +4747,7 @@ div[data-testid="stTextInput"] input:disabled {
                 else:
                     raise ValueError("multi-ship JSON must be an object or list")
             except Exception as exc:
-                st.error(f"Multi-ship config JSON non valido: {exc}")
+                st.error(f"{tr(lang, 'multi_ship_json_invalid', 'Multi-ship config JSON non valido')}: {exc}")
                 return
         else:
             ship_cfg_payload = {
@@ -4172,10 +4924,10 @@ div[data-testid="stTextInput"] input:disabled {
         if require_gpu:
             dry_cmd.append("--require-gpu")
 
-        with st.expander("Dry-run gate 256p", expanded=True):
-            st.caption("Eseguo 1 frame rapido prima del video per evitare render lunghi non validi.")
+        with st.expander(tr(lang, "dryrun_gate_title", "Dry-run gate 256p"), expanded=True):
+            st.caption(tr(lang, "dryrun_gate_caption", "Eseguo 1 frame rapido prima del video per evitare render lunghi non validi."))
             st.code(" ".join(dry_cmd), language="bash")
-            dry_progress = st.progress(0.0, text="Dry-run: preparing")
+            dry_progress = st.progress(0.0, text=tr(lang, "dryrun_preparing", "Dry-run: preparing"))
             dry_log_placeholder = st.empty()
             dry_rc, dry_log = _run_command_live(
                 dry_cmd,
@@ -4187,25 +4939,32 @@ div[data-testid="stTextInput"] input:disabled {
             dry_log_path.write_text(dry_log, encoding="utf-8")
             if dry_rc != 0:
                 dry_progress.empty()
-                st.error(f"Dry-run fallito (exit={dry_rc}). Blocco del video. Log: {dry_log_path}")
+                st.error(f"{tr(lang, 'dryrun_failed', 'Dry-run fallito')} (exit={dry_rc}). {tr(lang, 'log_label', 'Log')}: {dry_log_path}")
                 st.stop()
-            dry_progress.progress(1.0, text="Dry-run: completed")
+            dry_progress.progress(1.0, text=tr(lang, "dryrun_completed", "Dry-run: completed"))
             if dry_output.exists():
-                st.image(str(dry_output), caption=f"Dry-run preview: {dry_output}")
+                st.image(str(dry_output), caption=f"{tr(lang, 'dryrun_preview', 'Dry-run preview')}: {dry_output}")
             ok_dryrun, dry_reasons, dry_metrics = _analyze_dryrun_image(dry_output)
             st.caption(
-                "Dry-run metrics: "
+                tr(lang, "dryrun_metrics", "Dry-run metrics")
+                + ": "
                 + ", ".join(
                     f"{k}={v:.4f}" for k, v in sorted(dry_metrics.items())
                 )
             )
             if not ok_dryrun:
                 for reason in dry_reasons:
-                    st.error(f"Dry-run gate: {reason}")
-                st.error("Video bloccato dal gate di qualità. Correggi parametri e rilancia.")
+                    st.error(f"{tr(lang, 'dryrun_gate_reason', 'Dry-run gate')}: {reason}")
+                st.error(tr(lang, "video_blocked_quality_gate", "Video bloccato dal gate di qualità. Correggi parametri e rilancia."))
                 st.stop()
-            st.success("Dry-run superato: avvio del rendering video.")
-            st.info("Fase 2/2: avvio render video. Durante warmup kernel i primi frame possono impiegare un po'.")
+            st.session_state["pending_video_render"] = {
+                "cmd": list(cmd),
+                "cfg_path": str(cfg_path),
+                "workspace_path": str(workspace_path),
+                "output_path": str(cfg_obj.output),
+                "launch_mode": ("bg" if run_now_bg else "live"),
+            }
+            st.rerun()
 
     st.info(tr(lang, "cmd_launched", "Comando lanciato:"))
     st.code(" ".join(cmd), language="bash")
@@ -4232,8 +4991,9 @@ div[data-testid="stTextInput"] input:disabled {
             queued.append(queue_entry)
             st.session_state["async_queue"] = queued
             st.session_state["bg_launch_notice"] = (
-                f"Job accodato: `{job_id}` (posizione {len(queued)}). "
-                f"Apri il pannello queue per monitorare."
+                f"{tr(lang, 'job_queued', 'Job accodato')}: `{job_id}` "
+                f"({tr(lang, 'position', 'posizione')} {len(queued)}). "
+                f"{tr(lang, 'open_queue_panel_to_monitor', 'Apri il pannello queue per monitorare.')}"
             )
             st.rerun()
 
@@ -4249,16 +5009,19 @@ div[data-testid="stTextInput"] input:disabled {
         st.session_state["async_proc"] = proc
         st.session_state["async_meta"] = meta
         st.session_state["bg_launch_notice"] = (
-            f"Job avviato in background (PID {proc.pid}, id {job_id}). "
-            f"Apri il pannello '{tr(lang, 'bg_job', 'Job in background')}' per monitorarlo."
+            f"{tr(lang, 'job_started_background', 'Job avviato in background')} "
+            f"(PID {proc.pid}, id {job_id}). "
+            f"{tr(lang, 'open_panel_to_monitor', 'Apri il pannello')} "
+            f"'{tr(lang, 'bg_job', 'Job in background')}' "
+            f"{tr(lang, 'to_monitor', 'per monitorarlo')}."
         )
         st.rerun()
 
-    progress_widget = st.progress(0.0, text="Render rows: 0/0 (0.0%)")
-    log_placeholder = st.empty()
+    progress_widget = live_progress_slot.progress(0.0, text=tr(lang, "render_rows_initial", "Render rows: 0/0 (0.0%)"))
+    log_placeholder = live_log_slot
     frame_preview_placeholder = None
     if mode == "video" and bool(video_params.get("live_frame_preview", False)):
-        frame_preview_placeholder = st.empty()
+        frame_preview_placeholder = live_frame_slot
     rc, log_text = _run_command_live(
         cmd,
         workspace_path,
@@ -4270,7 +5033,7 @@ div[data-testid="stTextInput"] input:disabled {
     log_path.write_text(log_text, encoding="utf-8")
 
     if rc == 0:
-        progress_widget.progress(1.0, text="Render rows: completed (100.0%)")
+        progress_widget.progress(1.0, text=tr(lang, "render_rows_completed", "Render rows: completed (100.0%)"))
         st.success(f"{tr(lang, 'sim_completed', 'Simulazione completata. Log')}: {log_path}")
     else:
         progress_widget.empty()
