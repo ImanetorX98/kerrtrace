@@ -32,6 +32,7 @@ env/
 
 # Generated outputs
 out/
+claudeVersion/
 
 # Local/reference audio (not redistributable)
 assets/music/*.mp3
