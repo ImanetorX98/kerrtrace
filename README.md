@@ -263,6 +263,14 @@ Oppure via script console:
 kerrtrace-starship --output out/starship.mp4 --frames 120 --fps 24 --width 854 --height 480
 ```
 
+Compatibilita' legacy:
+
+```bash
+python -m scripts.render_obj_starship_video --help
+```
+
+Il path `scripts/render_obj_starship_video.py` resta disponibile come wrapper, ma il modulo primario e' `kerrtrace.starship_video`.
+
 Diagnostica device (utile su Mac per MPS):
 
 ```bash

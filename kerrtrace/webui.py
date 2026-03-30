@@ -28,6 +28,7 @@ else:
 try:
     from .config import RenderConfig
     from .geometry import event_horizon_radius, horizon_radii
+    from .starship_cli import build_starship_command
     from .webui_runtime import (
         launch_background_process as _launch_background_process,
         validate_workspace_path as _validate_workspace_path,
@@ -35,6 +36,7 @@ try:
 except ImportError:
     from kerrtrace.config import RenderConfig
     from kerrtrace.geometry import event_horizon_radius, horizon_radii
+    from kerrtrace.starship_cli import build_starship_command
     from kerrtrace.webui_runtime import (
         launch_background_process as _launch_background_process,
         validate_workspace_path as _validate_workspace_path,
@@ -4862,45 +4864,26 @@ div[data-testid="stNumberInput"] button svg {
             ship_substeps = int(starship_video_params.get("ship_substeps", 3))
             keep_starship_frames = bool(starship_video_params.get("keep_frames", False))
 
-        cmd = [
-            python_exec,
-            "-m",
-            "kerrtrace.starship_video",
-            "--ship-config-json",
-            str(ship_cfg_path),
-            "--output",
-            str(cfg_obj.output),
-            "--width",
-            str(int(width)),
-            "--height",
-            str(int(height)),
-            "--observer-radius",
-            str(float(observer_radius)),
-            "--observer-theta-deg",
-            str(float(observer_inclination_deg)),
-            "--observer-phi-deg",
-            str(float(observer_azimuth_deg)),
-            "--frames",
-            str(int(starship_frames)),
-            "--fps",
-            str(int(starship_fps)),
-            "--ship-substeps",
-            str(int(ship_substeps)),
-            "--disk-outer-radius",
-            str(float(disk_outer_radius)),
-            "--disk-emission-gain",
-            str(float(disk_emission_gain)),
-            "--step-size",
-            str(float(step_size)),
-            "--max-steps",
-            str(int(max_steps)),
-            "--device",
-            str(device),
-        ]
-        if keep_starship_frames:
-            cmd.append("--keep-frames")
-        if disk_inner_radius is not None:
-            cmd += ["--disk-inner-radius", str(float(disk_inner_radius))]
+        cmd = build_starship_command(
+            python_exec=str(python_exec),
+            ship_cfg_path=ship_cfg_path,
+            output_path=str(cfg_obj.output),
+            width=int(width),
+            height=int(height),
+            observer_radius=float(observer_radius),
+            observer_theta_deg=float(observer_inclination_deg),
+            observer_phi_deg=float(observer_azimuth_deg),
+            frames=int(starship_frames),
+            fps=int(starship_fps),
+            ship_substeps=int(ship_substeps),
+            disk_outer_radius=float(disk_outer_radius),
+            disk_emission_gain=float(disk_emission_gain),
+            step_size=float(step_size),
+            max_steps=int(max_steps),
+            device=str(device),
+            keep_frames=bool(keep_starship_frames),
+            disk_inner_radius=(None if disk_inner_radius is None else float(disk_inner_radius)),
+        )
     else:
         cmd = [python_exec, "-m", "kerrtrace", "--config", str(cfg_path), "--output", str(cfg_obj.output)]
         if require_gpu:
