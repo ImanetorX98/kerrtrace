@@ -37,6 +37,14 @@ Oppure installazione package locale:
 pip install -e .
 ```
 
+## Test locali
+
+Esegui la suite test nel virtualenv del progetto:
+
+```bash
+.venv/bin/python -m pytest -q tests
+```
+
 ## Installazione su Windows (PowerShell)
 
 Apri **PowerShell** nella cartella del progetto (`kerrtrace-main`) e usa questi passaggi:
@@ -116,6 +124,7 @@ streamlit run kerrtrace/webui.py
 ```
 
 Nota: la UI genera un file JSON di configurazione in `out/webui_runs/` e usa quello per il run.
+Per sicurezza, il campo workspace rifiuta percorsi di sistema (es. `/etc`), la root del filesystem e path che puntano a file invece che a directory.
 
 ### Avvio come app locale (launcher)
 
@@ -238,6 +247,20 @@ Usa la progress bar `tqdm` in terminale (invece della barra manuale):
 
 ```bash
 python -m kerrtrace --config example_config.json --progress-backend tqdm --enable-progress-bar --output out/render_tqdm.png
+```
+
+## Overlay Starship (package)
+
+Renderer OBJ Starship disponibile direttamente nel package (utile anche in build desktop):
+
+```bash
+python -m kerrtrace.starship_video --output out/starship.mp4 --frames 120 --fps 24 --width 854 --height 480
+```
+
+Oppure via script console:
+
+```bash
+kerrtrace-starship --output out/starship.mp4 --frames 120 --fps 24 --width 854 --height 480
 ```
 
 Diagnostica device (utile su Mac per MPS):

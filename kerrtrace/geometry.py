@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+import logging
 import math
 from itertools import product
 from typing import NamedTuple
@@ -8,22 +10,26 @@ import numpy as np
 
 import torch
 
+logger = logging.getLogger(__name__)
 
 THETA_EPS = 1.0e-4
 SIN2_EPS = 1.0e-7
 DIV_EPS = 1.0e-10
 
-METRIC_MODELS = {
-    "schwarzschild",
-    "kerr",
-    "reissner_nordstrom",
-    "kerr_newman",
-    "schwarzschild_de_sitter",
-    "kerr_de_sitter",
-    "reissner_nordstrom_de_sitter",
-    "kerr_newman_de_sitter",
-    "morris_thorne",
-}
+
+class MetricModel(str, Enum):
+    SCHWARZSCHILD = "schwarzschild"
+    KERR = "kerr"
+    REISSNER_NORDSTROM = "reissner_nordstrom"
+    KERR_NEWMAN = "kerr_newman"
+    SCHWARZSCHILD_DE_SITTER = "schwarzschild_de_sitter"
+    KERR_DE_SITTER = "kerr_de_sitter"
+    REISSNER_NORDSTROM_DE_SITTER = "reissner_nordstrom_de_sitter"
+    KERR_NEWMAN_DE_SITTER = "kerr_newman_de_sitter"
+    MORRIS_THORNE = "morris_thorne"
+
+
+METRIC_MODELS = {m.value for m in MetricModel}
 
 
 class MetricComponents(NamedTuple):
@@ -534,8 +540,8 @@ def isco_radius_general(
             break
 
     if bracket is None:
-        # Fallback: return best near-zero stability sample.
         best_r, _ = min(values, key=lambda item: abs(item[1]))
+        logger.warning("ISCO bracket not found, using nearest zero-stability sample at r=%.4f", best_r)
         return best_r
 
     a, b = bracket

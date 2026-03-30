@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from contextlib import nullcontext
 import hashlib
+import logging
 import math
 import numpy as np
 from pathlib import Path
@@ -10,6 +11,8 @@ import sys
 import threading
 import time
 from typing import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 from PIL import Image
 import torch
@@ -28,6 +31,7 @@ except Exception:
     tqdm_auto = None
 
 from .config import RenderConfig
+from .cache_utils import DEFAULT_CACHE_MAX_SIZE, LRUDict
 from .geometry import (
     THETA_EPS,
     effective_metric_parameters,
@@ -102,18 +106,20 @@ class PointEmitter:
 EmitterInput = PointEmitter | Sequence[PointEmitter] | None
 
 
+# Maximum number of entries per class-level cache to prevent unbounded memory growth.
+_CACHE_MAX_SIZE = DEFAULT_CACHE_MAX_SIZE
+_LRUDict = LRUDict
+
+
 class KerrRayTracer:
-    _cubemap_cache: dict[tuple[object, ...], tuple[torch.Tensor, ...]] = {}
-    _wormhole_remote_cubemap_cache: dict[tuple[object, ...], tuple[torch.Tensor, ...]] = {}
-    _hdri_cache: dict[tuple[object, ...], torch.Tensor] = {}
-    _nt_page_thorne_cache: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor]] = {}
-    _keplerian_omega_cache: dict[tuple[object, ...], tuple[torch.Tensor, torch.Tensor]] = {}
-    _disk_flux_reference_cache: dict[tuple[object, ...], float] = {}
-    _camera_1d_cache: dict[
-        tuple[object, ...],
-        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    ] = {}
-    _compiled_unbound_cache: dict[tuple[object, ...], Callable[..., torch.Tensor]] = {}
+    _cubemap_cache: _LRUDict = _LRUDict()
+    _wormhole_remote_cubemap_cache: _LRUDict = _LRUDict()
+    _hdri_cache: _LRUDict = _LRUDict()
+    _nt_page_thorne_cache: _LRUDict = _LRUDict()
+    _keplerian_omega_cache: _LRUDict = _LRUDict()
+    _disk_flux_reference_cache: _LRUDict = _LRUDict()
+    _camera_1d_cache: _LRUDict = _LRUDict()
+    _compiled_unbound_cache: _LRUDict = _LRUDict()
     _compiled_unbound_fail: set[tuple[object, ...]] = set()
     _compiled_unbound_lock = threading.Lock()
 
@@ -133,7 +139,13 @@ class KerrRayTracer:
                 return None
         try:
             compiled = torch.compile(fn, mode="reduce-overhead")
-        except Exception:
+        except (RuntimeError, torch.fx.proxy.TraceError) as exc:
+            logger.debug("torch.compile failed for key %s: %s", key, exc)
+            with cls._compiled_unbound_lock:
+                cls._compiled_unbound_fail.add(key)
+            return None
+        except Exception as exc:
+            logger.warning("Unexpected error during torch.compile for key %s: %s", key, exc)
             with cls._compiled_unbound_lock:
                 cls._compiled_unbound_fail.add(key)
             return None
@@ -197,7 +209,8 @@ class KerrRayTracer:
                 root = Path(self.config.persistent_cache_dir).expanduser().resolve()
                 root.mkdir(parents=True, exist_ok=True)
                 self._persistent_cache_root = root
-            except Exception:
+            except OSError as exc:
+                logger.warning("Could not create persistent cache directory '%s': %s", root, exc)
                 self._persistent_cache_root = None
         self._cuda_finalize_graph_ready = False
         self._cuda_finalize_graph_failed = False

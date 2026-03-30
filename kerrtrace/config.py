@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
+import logging
 from pathlib import Path
 import json
 import math
 import os
 
 import torch
+
+logger = logging.getLogger(__name__)
 from .geometry import (
     METRIC_MODELS,
     canonical_metric_model,
@@ -225,7 +228,8 @@ class RenderConfig:
         if cfg.disk_inner_radius is None:
             try:
                 h = event_horizon_radius(cfg.spin, model, cfg.charge, cfg.cosmological_constant)
-            except Exception:
+            except ValueError as exc:
+                logger.warning("Could not compute event horizon radius (%s); defaulting to 2.0", exc)
                 h = 2.0
             try:
                 if model == "kerr":
@@ -238,8 +242,9 @@ class RenderConfig:
                         cosmological_constant=cfg.cosmological_constant,
                         prograde=True,
                     )
-            except Exception:
+            except ValueError as exc:
                 rin = max(6.0, 1.25 * h)
+                logger.warning("Could not compute ISCO radius (%s); defaulting to %.3f", exc, rin)
             cfg = replace(cfg, disk_inner_radius=rin)
         if (not cfg.kerr_schild_improvements) and cfg.kerr_schild_mode != "off":
             cfg = replace(cfg, kerr_schild_mode="off")
@@ -289,14 +294,14 @@ class RenderConfig:
     def validated(self) -> "RenderConfig":
         cfg = self.with_defaults()
         if cfg.width < 64 or cfg.height < 64:
-            raise ValueError("Resolution too low. Use at least 64x64.")
+            raise ValueError(f"Resolution {cfg.width}x{cfg.height} too low. Use at least 64x64.")
         if cfg.width > 5000 or cfg.height > 5000:
-            raise ValueError("Resolution too high for this reference implementation.")
+            raise ValueError(f"Resolution {cfg.width}x{cfg.height} too high. Maximum is 5000x5000.")
         if cfg.metric_model not in METRIC_MODELS:
             raise ValueError(f"metric_model must be one of: {', '.join(sorted(METRIC_MODELS))}")
         is_wormhole = cfg.metric_model == "morris_thorne"
         if cfg.coordinate_system not in {"boyer_lindquist", "kerr_schild", "generalized_doran"}:
-            raise ValueError("coordinate_system must be 'boyer_lindquist', 'kerr_schild', or 'generalized_doran'")
+            raise ValueError(f"coordinate_system='{cfg.coordinate_system}' is invalid; must be 'boyer_lindquist', 'kerr_schild', or 'generalized_doran'")
         if is_wormhole and cfg.coordinate_system != "boyer_lindquist":
             raise ValueError(
                 "metric_model='morris_thorne' currently supports only "
@@ -306,7 +311,7 @@ class RenderConfig:
         if ks_family:
             # Generalized KS path: allow all supported metric families, including de Sitter variants.
             if cfg.kerr_schild_mode not in {"off", "fsal_only", "analytic"}:
-                raise ValueError("kerr_schild_mode must be one of: off, fsal_only, analytic")
+                raise ValueError(f"kerr_schild_mode='{cfg.kerr_schild_mode}' is invalid; must be one of: off, fsal_only, analytic")
             if cfg.metric_model == "kerr_newman_de_sitter":
                 if cfg.kerr_schild_mode == "off":
                     raise ValueError(
@@ -323,23 +328,23 @@ class RenderConfig:
             # Keep BL path semantics unchanged.
             cfg = replace(cfg, kerr_schild_mode="off")
         if not (-1.0e6 <= cfg.observer_inclination_deg <= 1.0e6):
-            raise ValueError("observer_inclination_deg is outside a sane range")
+            raise ValueError(f"observer_inclination_deg={cfg.observer_inclination_deg} is outside a sane range")
         if not (-1.0e6 <= cfg.observer_azimuth_deg <= 1.0e6):
-            raise ValueError("observer_azimuth_deg is outside a sane range")
+            raise ValueError(f"observer_azimuth_deg={cfg.observer_azimuth_deg} is outside a sane range")
         if not (-360.0 <= cfg.observer_roll_deg <= 360.0):
-            raise ValueError("observer_roll_deg must be in [-360, 360]")
+            raise ValueError(f"observer_roll_deg={cfg.observer_roll_deg} must be in [-360, 360]")
         if abs(cfg.charge) > 2.0:
-            raise ValueError("charge magnitude too large for this implementation (|charge| <= 2)")
+            raise ValueError(f"charge={cfg.charge} is too large for this implementation (|charge| <= 2)")
         if abs(cfg.cosmological_constant) > 0.2:
-            raise ValueError("cosmological_constant magnitude too large for this implementation (|Lambda| <= 0.2)")
+            raise ValueError(f"cosmological_constant={cfg.cosmological_constant} is too large for this implementation (|Lambda| <= 0.2)")
         if cfg.wormhole_throat_radius <= 0.0:
-            raise ValueError("wormhole_throat_radius must be > 0")
+            raise ValueError(f"wormhole_throat_radius={cfg.wormhole_throat_radius} must be > 0")
         if cfg.wormhole_length_scale <= 0.0:
-            raise ValueError("wormhole_length_scale must be > 0")
+            raise ValueError(f"wormhole_length_scale={cfg.wormhole_length_scale} must be > 0")
 
         a_eff, _, _ = effective_metric_parameters(cfg.metric_model, cfg.spin, cfg.charge, cfg.cosmological_constant)
         if abs(a_eff) >= 1.0:
-            raise ValueError("effective spin must satisfy |a| < 1 for rotating metrics")
+            raise ValueError(f"effective spin a_eff={a_eff:.4f} must satisfy |a| < 1 for rotating metrics")
 
         if is_wormhole:
             horizon = 0.0
@@ -366,9 +371,9 @@ class RenderConfig:
             if len(roots) >= 2:
                 cosmological_horizon = roots[-1]
                 if cfg.observer_radius >= 0.98 * cosmological_horizon:
-                    raise ValueError("observer_radius must stay inside the cosmological horizon for de Sitter metrics")
+                    raise ValueError(f"observer_radius={cfg.observer_radius} must stay inside the cosmological horizon ({cosmological_horizon:.4f}) for de Sitter metrics")
                 if cfg.escape_radius >= 0.995 * cosmological_horizon:
-                    raise ValueError("escape_radius must be below the cosmological horizon for de Sitter metrics")
+                    raise ValueError(f"escape_radius={cfg.escape_radius} must be below the cosmological horizon ({cosmological_horizon:.4f}) for de Sitter metrics")
 
         if is_wormhole:
             if not cfg.wormhole_allow_throat_crossing:
@@ -379,32 +384,32 @@ class RenderConfig:
                     )
         elif cfg.coordinate_system == "generalized_doran":
             if cfg.observer_radius <= 1.0e-3:
-                raise ValueError("observer_radius must be > 0 for generalized_doran coordinates")
+                raise ValueError(f"observer_radius={cfg.observer_radius} must be > 0 for generalized_doran coordinates")
         else:
             if cfg.observer_radius <= max(4.0, 1.02 * horizon):
-                raise ValueError("observer_radius must be safely outside the event horizon")
+                raise ValueError(f"observer_radius={cfg.observer_radius} must be safely outside the event horizon (horizon={horizon:.4f})")
         if cfg.disk_inner_radius is None:
             raise ValueError("disk_inner_radius default resolution failed")
         if (not is_wormhole) and cfg.disk_inner_radius <= max(1.0, 1.001 * horizon):
-            raise ValueError("disk_inner_radius must be outside the event horizon")
+            raise ValueError(f"disk_inner_radius={cfg.disk_inner_radius} must be outside the event horizon (horizon={horizon:.4f})")
         if cfg.disk_outer_radius <= cfg.disk_inner_radius:
-            raise ValueError("disk_outer_radius must be greater than disk_inner_radius")
+            raise ValueError(f"disk_outer_radius={cfg.disk_outer_radius} must be greater than disk_inner_radius={cfg.disk_inner_radius}")
         if cfg.inner_edge_boost < 0.0:
-            raise ValueError("inner_edge_boost must be >= 0")
+            raise ValueError(f"inner_edge_boost={cfg.inner_edge_boost} must be >= 0")
         if cfg.outer_edge_boost < 0.0:
-            raise ValueError("outer_edge_boost must be >= 0")
+            raise ValueError(f"outer_edge_boost={cfg.outer_edge_boost} must be >= 0")
         if cfg.background_mode not in {"procedural", "hdri", "darkspace"}:
-            raise ValueError("background_mode must be 'procedural', 'hdri' or 'darkspace'")
+            raise ValueError(f"background_mode='{cfg.background_mode}' is invalid; must be 'procedural', 'hdri' or 'darkspace'")
         if cfg.background_projection not in {"cubemap", "equirectangular", "darkspace"}:
-            raise ValueError("background_projection must be 'cubemap', 'equirectangular' or 'darkspace'")
+            raise ValueError(f"background_projection='{cfg.background_projection}' is invalid; must be 'cubemap', 'equirectangular' or 'darkspace'")
         if cfg.cubemap_face_size < 64 or cfg.cubemap_face_size > 4096:
-            raise ValueError("cubemap_face_size must be in [64, 4096]")
+            raise ValueError(f"cubemap_face_size={cfg.cubemap_face_size} must be in [64, 4096]")
         if cfg.background_mode == "hdri" and not cfg.hdri_path:
             raise ValueError("hdri_path is required when background_mode='hdri'")
         if cfg.hdri_exposure <= 0.0:
-            raise ValueError("hdri_exposure must be positive")
+            raise ValueError(f"hdri_exposure={cfg.hdri_exposure} must be positive")
         if cfg.wormhole_remote_hdri_exposure <= 0.0:
-            raise ValueError("wormhole_remote_hdri_exposure must be positive")
+            raise ValueError(f"wormhole_remote_hdri_exposure={cfg.wormhole_remote_hdri_exposure} must be positive")
         if cfg.wormhole_background_blend_width <= 0.0 or cfg.wormhole_background_blend_width > 100.0:
             raise ValueError("wormhole_background_blend_width must be in (0, 100]")
         if not (-1.0e6 <= cfg.background_meridian_offset_deg <= 1.0e6):

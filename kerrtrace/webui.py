@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import asdict, replace
 from datetime import datetime
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -27,9 +28,19 @@ else:
 try:
     from .config import RenderConfig
     from .geometry import event_horizon_radius, horizon_radii
+    from .webui_runtime import (
+        launch_background_process as _launch_background_process,
+        validate_workspace_path as _validate_workspace_path,
+    )
 except ImportError:
     from kerrtrace.config import RenderConfig
     from kerrtrace.geometry import event_horizon_radius, horizon_radii
+    from kerrtrace.webui_runtime import (
+        launch_background_process as _launch_background_process,
+        validate_workspace_path as _validate_workspace_path,
+    )
+
+logger = logging.getLogger(__name__)
 
 
 QUALITY_PRESETS: dict[str, tuple[int, int]] = {
@@ -159,7 +170,7 @@ WEBUI_BASE_DEFAULTS: dict[str, Any] = {
     "temporal_reprojection": False,
     "temporal_blend": 0.18,
     "temporal_clamp": 24.0,
-    "device": "mps",
+    "device": "auto",
     "dtype": "float32",
     "show_progress_bar": True,
     "progress_backend": "manual",
@@ -2349,42 +2360,6 @@ def _preflight_physical_checks(
     return errors, warnings
 
 
-def _launch_background_process(
-    *,
-    cmd: list[str],
-    workspace_path: Path,
-    log_path: Path,
-    cfg_path: Path,
-    output_hint: str,
-    stamp: str,
-    job_id: str,
-) -> tuple[subprocess.Popen[Any], dict[str, Any]]:
-    log_file = log_path.open("w", encoding="utf-8")
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(workspace_path),
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-    finally:
-        log_file.close()
-    meta = {
-        "job_id": job_id,
-        "started_at": datetime.now().strftime("%Y%m%d_%H%M%S"),
-        "queued_stamp": stamp,
-        "cfg_path": str(cfg_path),
-        "log_path": str(log_path),
-        "workspace": str(workspace_path),
-        "output_hint": str(output_hint),
-        "cmd": " ".join(cmd),
-        "history_recorded": False,
-    }
-    return proc, meta
-
-
 def main() -> None:
     if "ui_lang" not in st.session_state:
         st.session_state["ui_lang"] = "it"
@@ -2993,7 +2968,11 @@ div[data-testid="stNumberInput"] button svg {
                 st.error(f"{tr(lang, 'json_invalid', 'JSON non valido')}: {exc}")
                 loaded_cfg = {}
 
-        workspace_sidebar = Path(workspace).expanduser().resolve()
+        try:
+            workspace_sidebar = _validate_workspace_path(workspace)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
         preset_files = _list_presets(workspace_sidebar)
         preset_options = [""] + [p.stem for p in preset_files]
         with st.expander(tr(lang, "preset_manager", "Preset manager"), expanded=False):
@@ -3098,7 +3077,7 @@ div[data-testid="stNumberInput"] button svg {
     cfg_seed.setdefault("stream_encode_queue_size", int(default_cfg.get("stream_encode_queue_size", 4)))
     cfg_seed.setdefault("mps_auto_chunking", bool(default_cfg.get("mps_auto_chunking", True)))
 
-    workspace_path_preview = Path(workspace).expanduser().resolve()
+    workspace_path_preview = workspace_sidebar
     with st.expander(tr(lang, "manual_open", "Apri file manuale"), expanded=False):
         manual_default = str(
             st.session_state.get(
@@ -4653,7 +4632,7 @@ div[data-testid="stNumberInput"] button svg {
                 st.error(f"{tr(lang, 'preflight_prefix', 'Preflight')}: {emsg}")
             st.stop()
 
-    workspace_path = Path(workspace).expanduser().resolve()
+    workspace_path = workspace_path_preview
     run_dir = workspace_path / "out" / "webui_runs"
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -4800,10 +4779,6 @@ div[data-testid="stNumberInput"] button svg {
     cfg_path.write_text(json.dumps(asdict(cfg_obj), indent=2), encoding="utf-8")
 
     if mode in {"starship_frame", "starship_video"}:
-        script_path = workspace_path / "scripts" / "render_obj_starship_video.py"
-        if not script_path.exists():
-            st.error(f"{tr(lang, 'script_not_found', 'Script non trovato')}: {script_path}")
-            return
         obj_raw = str(starship_params.get("obj_path") or "").strip()
         if not obj_raw:
             st.error(tr(lang, "obj_model_required_starship", "OBJ model path è obbligatorio in modalità Starship."))
@@ -4890,7 +4865,7 @@ div[data-testid="stNumberInput"] button svg {
         cmd = [
             python_exec,
             "-m",
-            "scripts.render_obj_starship_video",
+            "kerrtrace.starship_video",
             "--ship-config-json",
             str(ship_cfg_path),
             "--output",

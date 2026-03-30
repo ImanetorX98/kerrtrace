@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 kerrtrace = "kerrtrace.cli:main"
 kerrtrace-ui = "kerrtrace.desktop_launcher:main"
+kerrtrace-starship = "kerrtrace.starship_video:main"
 
 [tool.setuptools.packages.find]
 include = ["kerrtrace*"]

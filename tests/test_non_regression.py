@@ -36,6 +36,26 @@ class NonRegressionTests(unittest.TestCase):
         self.assertIs(compiled_a, compiled_b)
         self.assertEqual(len(calls), 1)
 
+    def test_compiled_unbound_cache_marks_failed_key(self) -> None:
+        calls = 0
+
+        def fail_compile(fn, mode: str = "reduce-overhead"):
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("compile failed")
+
+        def dummy_rhs(self, state):  # pragma: no cover - simple placeholder
+            return state
+
+        key = ("dummy_fail", "cpu")
+        with patch("kerrtrace.raytracer.torch.compile", side_effect=fail_compile):
+            compiled_a = KerrRayTracer._get_compiled_unbound(key, dummy_rhs)
+            compiled_b = KerrRayTracer._get_compiled_unbound(key, dummy_rhs)
+
+        self.assertIsNone(compiled_a)
+        self.assertIsNone(compiled_b)
+        self.assertEqual(calls, 1)
+
     def test_adaptive_spatial_sampling_similarity(self) -> None:
         base_cfg = RenderConfig(
             width=128,
