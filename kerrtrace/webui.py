@@ -125,6 +125,52 @@ PRESET_CRITICAL_FIELDS: list[str] = [
     "dtype",
 ]
 
+# Default baseline shown/used by WebUI when no preset/JSON is loaded.
+WEBUI_BASE_DEFAULTS: dict[str, Any] = {
+    "width": 1280,
+    "height": 720,
+    "fov_deg": 38.0,
+    "metric_model": "kerr",
+    "coordinate_system": "kerr_schild",
+    "spin": 0.85,
+    "charge": 0.0,
+    "cosmological_constant": 0.0,
+    "observer_radius": 30.0,
+    "observer_inclination_deg": 80.0,
+    "observer_azimuth_deg": 0.0,
+    "observer_roll_deg": 0.0,
+    "disk_model": "physical_nt",
+    "disk_radial_profile": "nt_page_thorne",
+    "disk_inner_radius": None,
+    "disk_outer_radius": 12.0,
+    "disk_emission_gain": 30.0,
+    "disk_palette": "default",
+    "disk_layered_palette": True,
+    "disk_layer_count": 30,
+    "disk_layer_mix": 0.55,
+    "disk_layer_accident_strength": 0.42,
+    "disk_layer_accident_count": 3.8,
+    "disk_layer_accident_sharpness": 7.0,
+    "disk_layer_global_phase": 0.0,
+    "disk_layer_phase_rate_hz": 0.35,
+    "max_steps": 500,
+    "step_size": 0.11,
+    "adaptive_integrator": True,
+    "temporal_reprojection": False,
+    "temporal_blend": 0.18,
+    "temporal_clamp": 24.0,
+    "device": "mps",
+    "dtype": "float32",
+    "show_progress_bar": True,
+    "progress_backend": "manual",
+    "mps_optimized_kernel": True,
+    "mps_auto_chunking": True,
+    "compile_rhs": False,
+    "mixed_precision": False,
+    "camera_fastpath": True,
+    "atlas_cartesian_variant": False,
+}
+
 LANGUAGE_OPTIONS: dict[str, str] = {
     "it": "Italiano",
     "en": "English",
@@ -293,6 +339,7 @@ I18N: dict[str, dict[str, str]] = {
         "pending_video_mode_label": "Modalità lancio",
         "pending_video_live": "live",
         "pending_video_bg": "background",
+        "darkspace_active_msg": "Darkspace attivo: i controlli sfondo avanzati sono disabilitati.",
     },
     "en": {
         "page_title": "KerrTrace WebUI",
@@ -451,6 +498,7 @@ I18N: dict[str, dict[str, str]] = {
         "pending_video_mode_label": "Launch mode",
         "pending_video_live": "live",
         "pending_video_bg": "background",
+        "darkspace_active_msg": "Darkspace active: advanced background controls are disabled.",
     },
     "es": {
         "author_label": "Autor",
@@ -2667,6 +2715,8 @@ div[data-testid="stNumberInput"] button svg {
         st.session_state["preset_loaded_name"] = ""
     if "pending_video_render" not in st.session_state:
         st.session_state["pending_video_render"] = {}
+    if "pending_video_skip_clear_once" not in st.session_state:
+        st.session_state["pending_video_skip_clear_once"] = False
     if "bg_auto_refresh" not in st.session_state:
         st.session_state["bg_auto_refresh"] = True
     if "bg_auto_refresh_interval_s" not in st.session_state:
@@ -3004,6 +3054,9 @@ div[data-testid="stNumberInput"] button svg {
 
     cfg_seed = dict(default_cfg)
     cfg_seed.update(loaded_cfg)
+    for _k, _v in WEBUI_BASE_DEFAULTS.items():
+        if _k not in loaded_cfg:
+            cfg_seed[_k] = _v
     cfg_seed.setdefault("adaptive_spatial_sampling", bool(default_cfg.get("adaptive_spatial_sampling", False)))
     cfg_seed.setdefault("adaptive_spatial_preview_steps", int(default_cfg.get("adaptive_spatial_preview_steps", 96)))
     cfg_seed.setdefault("adaptive_spatial_min_scale", float(default_cfg.get("adaptive_spatial_min_scale", 0.65)))
@@ -3176,32 +3229,26 @@ div[data-testid="stNumberInput"] button svg {
                 key="quality_height_preset",
             )
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if mode == "video":
-            output_default = "out/webui_video.mp4"
-        elif mode == "starship_video":
-            output_default = "out/webui_starship_video.mp4"
-        elif mode == "starship_frame":
-            output_default = "out/webui_starship.png"
-        else:
-            output_default = "out/webui_frame.png"
-        output_seed_raw = str(loaded_cfg.get("output", output_default))
-        output_seed_path = Path(output_seed_raw)
+    if mode == "video":
+        output_default = "out/webui_video.mp4"
+    elif mode == "starship_video":
+        output_default = "out/webui_starship_video.mp4"
+    elif mode == "starship_frame":
+        output_default = "out/webui_starship.png"
+    else:
+        output_default = "out/webui_frame.png"
+    output_seed_raw = str(loaded_cfg.get("output", output_default))
+    output_seed_path = Path(output_seed_raw)
+
+    row1_col1, row1_col2, row1_col3 = st.columns(3)
+    with row1_col1:
         use_output_parts = st.checkbox(
             tfield(lang, "Compose output path from folder + filename"),
             value=False,
         )
-        if use_output_parts:
-            output_dir_default = str(output_seed_path.parent) if str(output_seed_path.parent).strip() else "out"
-            output_name_default = output_seed_path.name.strip() or Path(output_default).name
-            output_dir = st.text_input(tfield(lang, "Output directory"), value=output_dir_default)
-            output_name = st.text_input(tfield(lang, "Output file name"), value=output_name_default)
-            output_path = str(Path(output_dir).expanduser() / output_name)
-            st.caption(f"{tfield(lang, 'Output file')}: `{output_path}`")
-        else:
-            output_path = st.text_input(tfield(lang, "Output file"), value=output_seed_raw)
+    with row1_col2:
         fov_deg = st.number_input(tfield(lang, "FOV (deg)"), value=float(cfg_seed["fov_deg"]), step=0.1, format="%.3f")
+    with row1_col3:
         metric_model = st.selectbox(
             tfield(lang, "Metric model"),
             options=CHOICE_FIELDS["metric_model"],
@@ -3209,8 +3256,27 @@ div[data-testid="stNumberInput"] button svg {
                 _safe_choice(CHOICE_FIELDS["metric_model"], str(cfg_seed["metric_model"]))
             ),
         )
-        coord_options = _coordinate_options_for_metric(metric_model)
-        coord_seed = _safe_choice(coord_options, str(cfg_seed["coordinate_system"]))
+
+    coord_options = _coordinate_options_for_metric(metric_model)
+    coord_seed = _safe_choice(coord_options, str(cfg_seed["coordinate_system"]))
+    supports_spin, supports_charge, supports_lambda = _metric_supports_parameters(metric_model)
+    spin_default = max(-1.0, min(1.0, float(cfg_seed["spin"])))
+    charge_default = max(-1.0, min(1.0, float(cfg_seed["charge"])))
+    theta_default = _clamp(float(cfg_seed["observer_inclination_deg"]), 0.0, 180.0)
+    phi_default = _clamp(float(cfg_seed["observer_azimuth_deg"]), 0.0, 360.0)
+    roll_default = _clamp(float(cfg_seed["observer_roll_deg"]), 0.0, 360.0)
+
+    row2_col1, row2_col2, row2_col3 = st.columns(3)
+    with row2_col1:
+        if use_output_parts:
+            output_dir_default = str(output_seed_path.parent) if str(output_seed_path.parent).strip() else "out"
+            output_dir = st.text_input(tfield(lang, "Output directory"), value=output_dir_default)
+        else:
+            output_path = st.text_input(tfield(lang, "Output file"), value=output_seed_raw)
+            output_dir = str(Path(output_path).expanduser().parent)
+    with row2_col2:
+        observer_radius = st.number_input(tfield(lang, "Observer radius"), value=float(cfg_seed["observer_radius"]), step=0.5)
+    with row2_col3:
         coordinate_system = st.selectbox(
             tfield(lang, "Coordinate system"),
             options=coord_options,
@@ -3218,13 +3284,64 @@ div[data-testid="stNumberInput"] button svg {
             format_func=lambda c: _coordinate_label_for_metric(c, metric_model),
             disabled=(not bool(metric_model)),
         )
-        if metric_model == "morris_thorne":
-            st.caption(tr(lang, "morris_thorne_areolar_only", "Per Morris-Thorne è disponibile solo la coordinata in variabile areolare."))
-        supports_spin, supports_charge, supports_lambda = _metric_supports_parameters(metric_model)
-    with c2:
-        spin_default = max(-1.0, min(1.0, float(cfg_seed["spin"])))
-        charge_default = max(-1.0, min(1.0, float(cfg_seed["charge"])))
-        theta_default = _clamp(float(cfg_seed["observer_inclination_deg"]), 0.0, 180.0)
+
+    row3_col1, row3_col2, row3_col3 = st.columns(3)
+    with row3_col1:
+        if use_output_parts:
+            output_name_default = output_seed_path.name.strip() or Path(output_default).name
+            output_name = st.text_input(tfield(lang, "Output file name"), value=output_name_default)
+            output_path = str(Path(output_dir).expanduser() / output_name)
+            st.caption(f"{tfield(lang, 'Output file')}: `{output_path}`")
+        else:
+            st.text_input(
+                tfield(lang, "Output file name"),
+                value=Path(output_seed_raw).name,
+                disabled=True,
+                key="output_file_name_readonly_aligned",
+            )
+    with row3_col2:
+        observer_inclination_deg = st.number_input(
+            tfield(lang, "Observer inclination (deg)"),
+            min_value=0.0,
+            max_value=180.0,
+            value=theta_default,
+            step=0.5,
+        )
+    with row3_col3:
+        disk_model = st.selectbox(
+            tfield(lang, "Disk model"),
+            options=CHOICE_FIELDS["disk_model"],
+            index=CHOICE_FIELDS["disk_model"].index(_safe_choice(CHOICE_FIELDS["disk_model"], str(cfg_seed["disk_model"]))),
+        )
+
+    row4_col1, row4_col2, row4_col3 = st.columns(3)
+    with row4_col1:
+        observer_azimuth_deg = st.number_input(
+            tfield(lang, "Observer azimuth (deg)"),
+            min_value=0.0,
+            max_value=360.0,
+            value=phi_default,
+            step=0.5,
+        )
+    with row4_col2:
+        observer_roll_deg = st.number_input(
+            tfield(lang, "Observer roll (deg)"),
+            min_value=0.0,
+            max_value=360.0,
+            value=roll_default,
+            step=0.5,
+        )
+    with row4_col3:
+        disk_radial_profile = st.selectbox(
+            tfield(lang, "Disk radial profile"),
+            options=CHOICE_FIELDS["disk_radial_profile"],
+            index=CHOICE_FIELDS["disk_radial_profile"].index(
+                _safe_choice(CHOICE_FIELDS["disk_radial_profile"], str(cfg_seed["disk_radial_profile"]))
+            ),
+        )
+
+    row5_col1, row5_col2, row5_col3 = st.columns(3)
+    with row5_col1:
         spin = st.number_input(
             tfield(lang, "Spin a"),
             min_value=-1.0,
@@ -3235,6 +3352,7 @@ div[data-testid="stNumberInput"] button svg {
             disabled=(not supports_spin),
             help=_metric_param_tooltip(metric_model, "spin", supports_spin, lang),
         )
+    with row5_col2:
         charge = st.number_input(
             tfield(lang, "Charge Q"),
             min_value=-1.0,
@@ -3245,6 +3363,7 @@ div[data-testid="stNumberInput"] button svg {
             disabled=(not supports_charge),
             help=_metric_param_tooltip(metric_model, "charge", supports_charge, lang),
         )
+    with row5_col3:
         cosmological_constant = st.number_input(
             tfield(lang, "Lambda"),
             value=(float(cfg_seed["cosmological_constant"]) if supports_lambda else 0.0),
@@ -3253,53 +3372,23 @@ div[data-testid="stNumberInput"] button svg {
             disabled=(not supports_lambda),
             help=_metric_param_tooltip(metric_model, "lambda", supports_lambda, lang),
         )
-        observer_radius = st.number_input(tfield(lang, "Observer radius"), value=float(cfg_seed["observer_radius"]), step=0.5)
-        observer_inclination_deg = st.number_input(
-            tfield(lang, "Observer inclination (deg)"),
-            min_value=0.0,
-            max_value=180.0,
-            value=theta_default,
-            step=0.5,
-        )
-    with c3:
-        phi_default = _clamp(float(cfg_seed["observer_azimuth_deg"]), 0.0, 360.0)
-        observer_azimuth_deg = st.number_input(
-            tfield(lang, "Observer azimuth (deg)"),
-            min_value=0.0,
-            max_value=360.0,
-            value=phi_default,
-            step=0.5,
-        )
-        roll_default = _clamp(float(cfg_seed["observer_roll_deg"]), 0.0, 360.0)
-        observer_roll_deg = st.number_input(
-            tfield(lang, "Observer roll (deg)"),
-            min_value=0.0,
-            max_value=360.0,
-            value=roll_default,
-            step=0.5,
-        )
-        disabled_labels: list[str] = []
-        if not supports_spin:
-            disabled_labels.append("spin")
-        if not supports_charge:
-            disabled_labels.append("charge")
-        if not supports_lambda:
-            disabled_labels.append("lambda")
-        if disabled_labels:
-            st.caption(f"{tr(lang, 'unused_metric_params', 'Parametri non usati dalla metrica selezionata')}: {', '.join(disabled_labels)}.")
-        disk_model = st.selectbox(
-            tfield(lang, "Disk model"),
-            options=CHOICE_FIELDS["disk_model"],
-            index=CHOICE_FIELDS["disk_model"].index(_safe_choice(CHOICE_FIELDS["disk_model"], str(cfg_seed["disk_model"]))),
-        )
-        disk_radial_profile = st.selectbox(
-            tfield(lang, "Disk radial profile"),
-            options=CHOICE_FIELDS["disk_radial_profile"],
-            index=CHOICE_FIELDS["disk_radial_profile"].index(
-                _safe_choice(CHOICE_FIELDS["disk_radial_profile"], str(cfg_seed["disk_radial_profile"]))
-            ),
-        )
+
+    row6_col1, row6_col2, row6_col3 = st.columns(3)
+    with row6_col3:
         disk_outer_radius = st.number_input(tfield(lang, "Disk outer radius"), value=float(cfg_seed["disk_outer_radius"]), step=0.5)
+
+    if metric_model == "morris_thorne":
+        st.caption(tr(lang, "morris_thorne_areolar_only", "Per Morris-Thorne è disponibile solo la coordinata in variabile areolare."))
+
+    disabled_labels: list[str] = []
+    if not supports_spin:
+        disabled_labels.append("spin")
+    if not supports_charge:
+        disabled_labels.append("charge")
+    if not supports_lambda:
+        disabled_labels.append("lambda")
+    if disabled_labels:
+        st.caption(f"{tr(lang, 'unused_metric_params', 'Parametri non usati dalla metrica selezionata')}: {', '.join(disabled_labels)}.")
 
     st.subheader(tfield(lang, "Disk & Rendering"))
     perf_option_labels = {
@@ -3311,7 +3400,7 @@ div[data-testid="stNumberInput"] button svg {
     perf_profile = st.selectbox(
         tfield(lang, "Performance profile"),
         options=list(perf_option_labels.keys()),
-        index=1,
+        index=0,
         format_func=lambda k: perf_option_labels.get(k, k),
         help=(
             "Manual: leaves settings unchanged. "
@@ -3859,22 +3948,20 @@ div[data-testid="stNumberInput"] button svg {
                 _safe_choice(CHOICE_FIELDS["background_mode"], str(cfg_seed["background_mode"]))
             ),
         )
-        projection_seed = (
-            "darkspace"
-            if str(cfg_seed.get("background_mode", "procedural")) == "darkspace"
-            else str(cfg_seed.get("background_projection", "cubemap"))
-        )
+        mode_is_darkspace = background_mode == "darkspace"
+        projection_seed = "darkspace" if mode_is_darkspace else str(cfg_seed.get("background_projection", "cubemap"))
+        if projection_seed == "darkspace" and not mode_is_darkspace:
+            projection_seed = "cubemap"
         background_projection = st.selectbox(
             tfield(lang, "Background projection"),
             options=CHOICE_FIELDS["background_projection"],
             index=CHOICE_FIELDS["background_projection"].index(
                 _safe_choice(CHOICE_FIELDS["background_projection"], projection_seed)
             ),
+            disabled=mode_is_darkspace,
         )
-    if background_projection == "darkspace":
-        background_mode = "darkspace"
-    elif background_mode == "darkspace":
-        background_mode = "procedural"
+    if background_mode == "darkspace":
+        background_projection = "darkspace"
     is_darkspace = background_mode == "darkspace"
     is_hdri = background_mode == "hdri"
     wormhole_remote_hdri_path = str(cfg_seed.get("wormhole_remote_hdri_path") or "")
@@ -3909,14 +3996,14 @@ div[data-testid="stNumberInput"] button svg {
         hdri_path = st.text_input(
             tfield(lang, "HDRI path"),
             value=str(cfg_seed.get("hdri_path") or ""),
-            disabled=(not is_hdri),
+            disabled=(not is_hdri) or is_darkspace,
         )
         hdri_exposure = st.number_input(
             tfield(lang, "HDRI exposure"),
             min_value=0.01,
             value=float(cfg_seed["hdri_exposure"]),
             step=0.1,
-            disabled=(not is_hdri),
+            disabled=(not is_hdri) or is_darkspace,
         )
         hdri_rotation_default = _clamp(float(cfg_seed["hdri_rotation_deg"]), 0.0, 360.0)
         hdri_rotation_deg = st.number_input(
@@ -3925,19 +4012,21 @@ div[data-testid="stNumberInput"] button svg {
             max_value=360.0,
             value=hdri_rotation_default,
             step=1.0,
-            disabled=(not is_hdri),
+            disabled=(not is_hdri) or is_darkspace,
         )
         if metric_model == "morris_thorne":
             with st.expander(tr(lang, "wormhole_remote_background", "Wormhole remote background"), expanded=True):
                 wormhole_remote_hdri_path = st.text_input(
                     tfield(lang, "Wormhole remote HDRI path"),
                     value=wormhole_remote_hdri_path,
+                    disabled=is_darkspace,
                 )
                 wormhole_remote_hdri_exposure = st.number_input(
                     tfield(lang, "Wormhole remote HDRI exposure"),
                     min_value=0.01,
                     value=float(wormhole_remote_hdri_exposure),
                     step=0.1,
+                    disabled=is_darkspace,
                 )
                 wormhole_remote_hdri_rotation_default = _clamp(float(wormhole_remote_hdri_rotation_deg), 0.0, 360.0)
                 wormhole_remote_hdri_rotation_deg = st.number_input(
@@ -3946,16 +4035,19 @@ div[data-testid="stNumberInput"] button svg {
                     max_value=360.0,
                     value=wormhole_remote_hdri_rotation_default,
                     step=1.0,
+                    disabled=is_darkspace,
                 )
                 wormhole_remote_cubemap_coherent = st.checkbox(
                     tfield(lang, "Wormhole remote cubemap coherent"),
                     value=bool(wormhole_remote_cubemap_coherent),
                     help="Usa campionamento cubemap coerente anche sul lato remoto del wormhole (fix seam forte).",
+                    disabled=is_darkspace,
                 )
                 wormhole_background_continuous_blend = st.checkbox(
                     tfield(lang, "Wormhole continuous background blend"),
                     value=bool(wormhole_background_continuous_blend),
                     help="Sfuma gradualmente lo switch locale/remoto vicino alla gola (r=0).",
+                    disabled=is_darkspace,
                 )
                 wormhole_background_blend_width = st.number_input(
                     tfield(lang, "Wormhole background blend width"),
@@ -3964,9 +4056,10 @@ div[data-testid="stNumberInput"] button svg {
                     value=float(wormhole_background_blend_width),
                     step=0.01,
                     format="%.4f",
-                    disabled=(not wormhole_background_continuous_blend),
+                    disabled=(not wormhole_background_continuous_blend) or is_darkspace,
                 )
     if is_darkspace:
+        st.info(tr(lang, "darkspace_active_msg", "Darkspace attivo: i controlli sfondo avanzati sono disabilitati."))
         enable_star_background = False
         star_density = 0.0
         star_brightness = 0.0
@@ -4349,7 +4442,9 @@ div[data-testid="stNumberInput"] button svg {
             ab_compare_max_steps = st.number_input(tr(lang, "ab_max_steps", "A/B max_steps"), min_value=64, max_value=4000, value=320, step=16)
             ab_patch_a_text = st.text_area(tr(lang, "ab_patch_a_json", "A patch JSON"), value="{}", height=100)
             ab_patch_b_text = st.text_area(tr(lang, "ab_patch_b_json", "B patch JSON"), value='{"disk_emission_gain": 3.0}', height=100)
-    if run_now_live or run_now_bg or run_ab_compare:
+    if bool(st.session_state.get("pending_video_skip_clear_once", False)):
+        st.session_state["pending_video_skip_clear_once"] = False
+    elif run_now_live or run_now_bg or run_ab_compare:
         st.session_state["pending_video_render"] = {}
 
     pending_video_payload = st.session_state.get("pending_video_render")
@@ -4964,6 +5059,7 @@ div[data-testid="stNumberInput"] button svg {
                 "output_path": str(cfg_obj.output),
                 "launch_mode": ("bg" if run_now_bg else "live"),
             }
+            st.session_state["pending_video_skip_clear_once"] = True
             st.rerun()
 
     st.info(tr(lang, "cmd_launched", "Comando lanciato:"))
