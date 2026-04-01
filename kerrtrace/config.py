@@ -41,6 +41,7 @@ class RenderConfig:
     cosmological_constant: float = 0.0
     wormhole_throat_radius: float = 1.0
     wormhole_length_scale: float = 1.0
+    wormhole_lensing_scale: float = 1.0
     wormhole_allow_throat_crossing: bool = False
     observer_radius: float = 30.0
     observer_inclination_deg: float = 80.0
@@ -72,6 +73,11 @@ class RenderConfig:
     wormhole_mt_unwrap_phi: bool = False
     wormhole_mt_shortest_arc_phi_interp: bool = False
     wormhole_mt_sky_sample_from_xyz: bool = False
+    wormhole_mt_beam_supersampling: bool = True
+    wormhole_mt_beam_samples: int = 1
+    wormhole_mt_beam_jitter: float = 0.40
+    wormhole_mt_beam_threshold: float = 6.0
+    wormhole_mt_beam_band_halfwidth: int = 6
     background_meridian_offset_deg: float = 137.5
     meridian_supersample: bool = True
     destripe_meridian: bool = False
@@ -299,13 +305,13 @@ class RenderConfig:
             raise ValueError(f"Resolution {cfg.width}x{cfg.height} too high. Maximum is 5000x5000.")
         if cfg.metric_model not in METRIC_MODELS:
             raise ValueError(f"metric_model must be one of: {', '.join(sorted(METRIC_MODELS))}")
-        is_wormhole = cfg.metric_model == "morris_thorne"
+        is_wormhole = cfg.metric_model in {"morris_thorne", "dneg_wormhole"}
         if cfg.coordinate_system not in {"boyer_lindquist", "kerr_schild", "generalized_doran"}:
             raise ValueError(f"coordinate_system='{cfg.coordinate_system}' is invalid; must be 'boyer_lindquist', 'kerr_schild', or 'generalized_doran'")
         if is_wormhole and cfg.coordinate_system != "boyer_lindquist":
             raise ValueError(
-                "metric_model='morris_thorne' currently supports only "
-                "coordinate_system='boyer_lindquist' (variabile areolare)"
+                f"metric_model='{cfg.metric_model}' currently supports only "
+                "coordinate_system='boyer_lindquist'"
             )
         ks_family = cfg.coordinate_system in {"kerr_schild", "generalized_doran"}
         if ks_family:
@@ -339,8 +345,10 @@ class RenderConfig:
             raise ValueError(f"cosmological_constant={cfg.cosmological_constant} is too large for this implementation (|Lambda| <= 0.2)")
         if cfg.wormhole_throat_radius <= 0.0:
             raise ValueError(f"wormhole_throat_radius={cfg.wormhole_throat_radius} must be > 0")
-        if cfg.wormhole_length_scale <= 0.0:
-            raise ValueError(f"wormhole_length_scale={cfg.wormhole_length_scale} must be > 0")
+        if cfg.wormhole_length_scale < 0.0:
+            raise ValueError(f"wormhole_length_scale={cfg.wormhole_length_scale} must be >= 0")
+        if cfg.wormhole_lensing_scale <= 0.0:
+            raise ValueError(f"wormhole_lensing_scale={cfg.wormhole_lensing_scale} must be > 0")
 
         a_eff, _, _ = effective_metric_parameters(cfg.metric_model, cfg.spin, cfg.charge, cfg.cosmological_constant)
         if abs(a_eff) >= 1.0:
@@ -412,6 +420,14 @@ class RenderConfig:
             raise ValueError(f"wormhole_remote_hdri_exposure={cfg.wormhole_remote_hdri_exposure} must be positive")
         if cfg.wormhole_background_blend_width <= 0.0 or cfg.wormhole_background_blend_width > 100.0:
             raise ValueError("wormhole_background_blend_width must be in (0, 100]")
+        if cfg.wormhole_mt_beam_samples < 0 or cfg.wormhole_mt_beam_samples > 4:
+            raise ValueError("wormhole_mt_beam_samples must be in [0, 4]")
+        if cfg.wormhole_mt_beam_jitter <= 0.0 or cfg.wormhole_mt_beam_jitter > 1.0:
+            raise ValueError("wormhole_mt_beam_jitter must be in (0, 1]")
+        if cfg.wormhole_mt_beam_threshold < 1.0 or cfg.wormhole_mt_beam_threshold > 100.0:
+            raise ValueError("wormhole_mt_beam_threshold must be in [1, 100]")
+        if cfg.wormhole_mt_beam_band_halfwidth < 1 or cfg.wormhole_mt_beam_band_halfwidth > 64:
+            raise ValueError("wormhole_mt_beam_band_halfwidth must be in [1, 64]")
         if not (-1.0e6 <= cfg.background_meridian_offset_deg <= 1.0e6):
             raise ValueError("background_meridian_offset_deg is outside a sane range")
         if not (0.0 <= cfg.star_density <= 0.05):

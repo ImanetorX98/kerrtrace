@@ -91,6 +91,7 @@ def _parse_args() -> argparse.Namespace:
             "reissner_nordstrom_de_sitter",
             "kerr_newman_de_sitter",
             "morris_thorne",
+            "dneg_wormhole",
         ],
     )
     parser.add_argument("--spin", type=float)
@@ -98,6 +99,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cosmological-constant", type=float)
     parser.add_argument("--wormhole-throat-radius", type=float)
     parser.add_argument("--wormhole-length-scale", type=float)
+    parser.add_argument("--wormhole-lensing-scale", type=float)
     parser.add_argument("--enable-wormhole-throat-crossing", action="store_true")
     parser.add_argument("--disable-wormhole-throat-crossing", action="store_true")
     parser.add_argument("--observer-radius", type=float)
@@ -138,6 +140,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-wormhole-mt-shortest-arc-phi", action="store_true")
     parser.add_argument("--enable-wormhole-mt-sky-from-xyz", action="store_true")
     parser.add_argument("--disable-wormhole-mt-sky-from-xyz", action="store_true")
+    parser.add_argument("--enable-wormhole-mt-beam-supersampling", action="store_true")
+    parser.add_argument("--disable-wormhole-mt-beam-supersampling", action="store_true")
+    parser.add_argument("--wormhole-mt-beam-samples", type=int)
+    parser.add_argument("--wormhole-mt-beam-jitter", type=float)
+    parser.add_argument("--wormhole-mt-beam-threshold", type=float)
+    parser.add_argument("--wormhole-mt-beam-band-halfwidth", type=int)
     parser.add_argument("--background-meridian-offset-deg", type=float)
     parser.add_argument("--disable-star-background", action="store_true")
     parser.add_argument("--disable-meridian-supersample", action="store_true")
@@ -477,6 +485,7 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "cosmological_constant": args.cosmological_constant,
         "wormhole_throat_radius": args.wormhole_throat_radius,
         "wormhole_length_scale": args.wormhole_length_scale,
+        "wormhole_lensing_scale": args.wormhole_lensing_scale,
         "wormhole_allow_throat_crossing": None,
         "observer_radius": args.observer_radius,
         "observer_inclination_deg": args.observer_inclination_deg,
@@ -508,6 +517,11 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "wormhole_mt_unwrap_phi": None,
         "wormhole_mt_shortest_arc_phi_interp": None,
         "wormhole_mt_sky_sample_from_xyz": None,
+        "wormhole_mt_beam_supersampling": None,
+        "wormhole_mt_beam_samples": args.wormhole_mt_beam_samples,
+        "wormhole_mt_beam_jitter": args.wormhole_mt_beam_jitter,
+        "wormhole_mt_beam_threshold": args.wormhole_mt_beam_threshold,
+        "wormhole_mt_beam_band_halfwidth": args.wormhole_mt_beam_band_halfwidth,
         "background_meridian_offset_deg": args.background_meridian_offset_deg,
         "disk_temperature_inner": args.disk_temperature_inner,
         "disk_color_correction": args.disk_color_correction,
@@ -632,6 +646,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["wormhole_mt_sky_sample_from_xyz"] = True
     if args.disable_wormhole_mt_sky_from_xyz:
         updates["wormhole_mt_sky_sample_from_xyz"] = False
+    if args.enable_wormhole_mt_beam_supersampling:
+        updates["wormhole_mt_beam_supersampling"] = True
+    if args.disable_wormhole_mt_beam_supersampling:
+        updates["wormhole_mt_beam_supersampling"] = False
     if args.disable_accretion_disk:
         updates["enable_accretion_disk"] = False
     if args.enable_accretion_disk:

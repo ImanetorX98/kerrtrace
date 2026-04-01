@@ -3689,6 +3689,47 @@ div[data-testid="stNumberInput"] button svg {
                 disabled=(not mt_metric_active),
                 help="Ricava gli angoli sky da direzioni cartesiane finali (meno sensibile alle seam di phi).",
             )
+            wormhole_mt_beam_supersampling = st.checkbox(
+                "Morris-Thorne: beam supersampling (upgrade 3)",
+                value=bool(cfg_seed.get("wormhole_mt_beam_supersampling", True)),
+                disabled=(not mt_metric_active),
+                help="Ricalcola una banda verticale attorno alla seam con jitter subpixel orizzontale.",
+            )
+            beam_controls_enabled = bool(mt_metric_active and wormhole_mt_beam_supersampling)
+            wormhole_mt_beam_samples = st.number_input(
+                "Morris-Thorne: beam samples",
+                min_value=0,
+                max_value=4,
+                value=int(cfg_seed.get("wormhole_mt_beam_samples", 1)),
+                step=1,
+                disabled=(not beam_controls_enabled),
+            )
+            wormhole_mt_beam_jitter = st.number_input(
+                "Morris-Thorne: beam jitter",
+                min_value=0.01,
+                max_value=1.00,
+                value=float(cfg_seed.get("wormhole_mt_beam_jitter", 0.40)),
+                step=0.01,
+                format="%.2f",
+                disabled=(not beam_controls_enabled),
+            )
+            wormhole_mt_beam_threshold = st.number_input(
+                "Morris-Thorne: beam threshold",
+                min_value=1.0,
+                max_value=100.0,
+                value=float(cfg_seed.get("wormhole_mt_beam_threshold", 6.0)),
+                step=0.5,
+                format="%.1f",
+                disabled=(not beam_controls_enabled),
+            )
+            wormhole_mt_beam_band_halfwidth = st.number_input(
+                "Morris-Thorne: beam band halfwidth",
+                min_value=1,
+                max_value=64,
+                value=int(cfg_seed.get("wormhole_mt_beam_band_halfwidth", 6)),
+                step=1,
+                disabled=(not beam_controls_enabled),
+            )
 
         roi_expanded = bool(cfg_seed.get("roi_supersampling", False) or cfg_seed.get("quality_lock", False))
         with st.expander(tr(lang, "roi_quality_cache_options", "ROI, quality & cache"), expanded=roi_expanded):
@@ -4389,6 +4430,11 @@ div[data-testid="stNumberInput"] button svg {
             "wormhole_mt_unwrap_phi": bool(wormhole_mt_unwrap_phi),
             "wormhole_mt_shortest_arc_phi_interp": bool(wormhole_mt_shortest_arc_phi_interp),
             "wormhole_mt_sky_sample_from_xyz": bool(wormhole_mt_sky_sample_from_xyz),
+            "wormhole_mt_beam_supersampling": bool(wormhole_mt_beam_supersampling),
+            "wormhole_mt_beam_samples": int(wormhole_mt_beam_samples),
+            "wormhole_mt_beam_jitter": float(wormhole_mt_beam_jitter),
+            "wormhole_mt_beam_threshold": float(wormhole_mt_beam_threshold),
+            "wormhole_mt_beam_band_halfwidth": int(wormhole_mt_beam_band_halfwidth),
             "output": output_path,
         }
     )

@@ -27,6 +27,7 @@ class MetricModel(str, Enum):
     REISSNER_NORDSTROM_DE_SITTER = "reissner_nordstrom_de_sitter"
     KERR_NEWMAN_DE_SITTER = "kerr_newman_de_sitter"
     MORRIS_THORNE = "morris_thorne"
+    DNEG_WORMHOLE = "dneg_wormhole"
 
 
 METRIC_MODELS = {m.value for m in MetricModel}
@@ -76,13 +77,40 @@ def effective_metric_parameters(metric_model: str, spin: float, charge: float, c
     return a, q, lmb
 
 
+def _dneg_areal_radius(
+    ell: torch.Tensor,
+    rho: torch.Tensor,
+    half_len: torch.Tensor,
+    lensing_scale: torch.Tensor,
+) -> torch.Tensor:
+    """Areal radius r(ℓ) for the Dneg wormhole metric (James et al. 2015, AJP).
+
+    Parameters
+    ----------
+    ell         : proper radial coordinate (negative on far side)
+    rho         : throat radius (ρ)
+    half_len    : half-length of the cylindrical interior (a); r = ρ for |ℓ| ≤ a
+    lensing_scale : lensing parameter M; controls how quickly r grows outside the throat
+
+    r(ℓ) = ρ                                        for |ℓ| ≤ a
+    r(ℓ) = ρ + (2M/π)[x·arctan(x) − ½·ln(1+x²)]   for |ℓ| > a
+           where x = 2(|ℓ| − a) / (πM)
+    """
+    abs_ell = torch.abs(ell)
+    outer = torch.clamp(abs_ell - half_len, min=0.0)
+    M_safe = torch.clamp(lensing_scale, min=1.0e-8)
+    x = 2.0 * outer / (math.pi * M_safe)
+    r_outer = rho + (2.0 * M_safe / math.pi) * (x * torch.atan(x) - 0.5 * torch.log1p(x * x))
+    return torch.where(abs_ell <= half_len, rho * torch.ones_like(ell), r_outer)
+
+
 def horizon_radii(
     spin: float,
     metric_model: str = "kerr",
     charge: float = 0.0,
     cosmological_constant: float = 0.0,
 ) -> list[float]:
-    if canonical_metric_model(metric_model) == "morris_thorne":
+    if canonical_metric_model(metric_model) in {"morris_thorne", "dneg_wormhole"}:
         return []
     a, q, lmb = effective_metric_parameters(metric_model, spin, charge, cosmological_constant)
 
@@ -111,8 +139,11 @@ def event_horizon_radius(
     charge: float = 0.0,
     cosmological_constant: float = 0.0,
 ) -> float:
-    if canonical_metric_model(metric_model) == "morris_thorne":
+    model = canonical_metric_model(metric_model)
+    if model == "morris_thorne":
         raise ValueError("Morris-Thorne wormhole has no event horizon")
+    if model == "dneg_wormhole":
+        raise ValueError("Dneg wormhole has no event horizon")
     _, _, lmb = effective_metric_parameters(metric_model, spin, charge, cosmological_constant)
     real_pos = horizon_radii(spin, metric_model, charge, cosmological_constant)
     if not real_pos:
@@ -165,8 +196,10 @@ def metric_components(
     cosmological_constant: float = 0.0,
     wormhole_throat_radius: float = 1.0,
     wormhole_length_scale: float = 1.0,
+    wormhole_lensing_scale: float = 1.0,
 ) -> MetricComponents:
-    if canonical_metric_model(metric_model) == "morris_thorne":
+    model = canonical_metric_model(metric_model)
+    if model == "morris_thorne":
         b0 = torch.as_tensor(max(1.0e-6, float(wormhole_throat_radius)), dtype=r.dtype, device=r.device)
         length_scale = torch.as_tensor(max(1.0e-6, float(wormhole_length_scale)), dtype=r.dtype, device=r.device)
         inv_len = 1.0 / length_scale
@@ -180,6 +213,27 @@ def metric_components(
         g_rr = torch.ones_like(r) * (inv_len * inv_len)
         g_thth = rho2_safe
         g_phiphi = rho2_safe * sin2
+        return MetricComponents(g_tt=g_tt, g_tphi=g_tphi, g_rr=g_rr, g_thth=g_thth, g_phiphi=g_phiphi)
+
+    if model == "dneg_wormhole":
+        # Dneg three-parameter wormhole (James et al. 2015, AJP arXiv:1502.03809).
+        # ds² = -dt² + dℓ² + r(ℓ)²(dθ² + sin²θ dφ²)
+        # where r(ℓ) is the Dneg areal radius.  Here the BL coordinate r IS the
+        # proper radial distance ℓ (signed: negative on the far side).
+        # wormhole_throat_radius  = ρ  (throat radius)
+        # wormhole_length_scale   = a  (half-length of cylindrical interior)
+        # wormhole_lensing_scale  = M  (lensing parameter)
+        rho = torch.as_tensor(max(1.0e-6, float(wormhole_throat_radius)), dtype=r.dtype, device=r.device)
+        half_len = torch.as_tensor(max(0.0, float(wormhole_length_scale)), dtype=r.dtype, device=r.device)
+        M_lens = torch.as_tensor(max(1.0e-6, float(wormhole_lensing_scale)), dtype=r.dtype, device=r.device)
+        sin2 = torch.clamp(torch.sin(theta) * torch.sin(theta), min=SIN2_EPS)
+        r_areal = _dneg_areal_radius(r, rho, half_len, M_lens)
+        r2 = torch.clamp(r_areal * r_areal, min=DIV_EPS)
+        g_tt = -torch.ones_like(r)
+        g_tphi = torch.zeros_like(r)
+        g_rr = torch.ones_like(r)
+        g_thth = r2
+        g_phiphi = r2 * sin2
         return MetricComponents(g_tt=g_tt, g_tphi=g_tphi, g_rr=g_rr, g_thth=g_thth, g_phiphi=g_phiphi)
 
     sigma, delta_r, delta_theta, sin2, a, xi = _knds_common(r, theta, metric_model, spin, charge, cosmological_constant)
@@ -208,8 +262,10 @@ def inverse_metric_components(
     cosmological_constant: float = 0.0,
     wormhole_throat_radius: float = 1.0,
     wormhole_length_scale: float = 1.0,
+    wormhole_lensing_scale: float = 1.0,
 ) -> InverseMetricComponents:
-    if canonical_metric_model(metric_model) == "morris_thorne":
+    model = canonical_metric_model(metric_model)
+    if model == "morris_thorne":
         b0 = torch.as_tensor(max(1.0e-6, float(wormhole_throat_radius)), dtype=r.dtype, device=r.device)
         length_scale = torch.as_tensor(max(1.0e-6, float(wormhole_length_scale)), dtype=r.dtype, device=r.device)
         b02 = b0 * b0
@@ -221,6 +277,20 @@ def inverse_metric_components(
         grr = torch.ones_like(r) * (length_scale * length_scale)
         gthth = 1.0 / rho2
         gphiphi = 1.0 / torch.clamp(rho2 * sin2, min=DIV_EPS)
+        return InverseMetricComponents(gtt=gtt, gtphi=gtphi, grr=grr, gthth=gthth, gphiphi=gphiphi)
+
+    if model == "dneg_wormhole":
+        rho = torch.as_tensor(max(1.0e-6, float(wormhole_throat_radius)), dtype=r.dtype, device=r.device)
+        half_len = torch.as_tensor(max(0.0, float(wormhole_length_scale)), dtype=r.dtype, device=r.device)
+        M_lens = torch.as_tensor(max(1.0e-6, float(wormhole_lensing_scale)), dtype=r.dtype, device=r.device)
+        sin2 = torch.clamp(torch.sin(theta) * torch.sin(theta), min=SIN2_EPS)
+        r_areal = _dneg_areal_radius(r, rho, half_len, M_lens)
+        r2 = torch.clamp(r_areal * r_areal, min=DIV_EPS)
+        gtt = -torch.ones_like(r)
+        gtphi = torch.zeros_like(r)
+        grr = torch.ones_like(r)
+        gthth = 1.0 / r2
+        gphiphi = 1.0 / torch.clamp(r2 * sin2, min=DIV_EPS)
         return InverseMetricComponents(gtt=gtt, gtphi=gtphi, grr=grr, gthth=gthth, gphiphi=gphiphi)
 
     sigma, delta_r, delta_theta, sin2, a, xi = _knds_common(r, theta, metric_model, spin, charge, cosmological_constant)
@@ -250,6 +320,7 @@ def inverse_metric_derivatives(
     cosmological_constant: float = 0.0,
     wormhole_throat_radius: float = 1.0,
     wormhole_length_scale: float = 1.0,
+    wormhole_lensing_scale: float = 1.0,
     r_rel_eps: float = 1.0e-4,
     theta_eps: float = 1.0e-5,
 ) -> tuple[InverseMetricComponents, InverseMetricComponents]:
@@ -257,7 +328,7 @@ def inverse_metric_derivatives(
     one = torch.ones_like(r)
     eps_r = r_rel_eps * torch.maximum(r.abs(), one)
 
-    if model == "morris_thorne":
+    if model in {"morris_thorne", "dneg_wormhole"}:
         r_plus = r + eps_r
         r_minus = r - eps_r
     else:
@@ -276,6 +347,7 @@ def inverse_metric_derivatives(
         cosmological_constant,
         wormhole_throat_radius,
         wormhole_length_scale,
+        wormhole_lensing_scale,
     )
     inv_r_minus = inverse_metric_components(
         r_minus,
@@ -286,6 +358,7 @@ def inverse_metric_derivatives(
         cosmological_constant,
         wormhole_throat_radius,
         wormhole_length_scale,
+        wormhole_lensing_scale,
     )
     dr = torch.clamp(r_plus - r_minus, min=1.0e-9)
 
@@ -306,6 +379,7 @@ def inverse_metric_derivatives(
         cosmological_constant,
         wormhole_throat_radius,
         wormhole_length_scale,
+        wormhole_lensing_scale,
     )
     inv_th_minus = inverse_metric_components(
         r,
@@ -316,6 +390,7 @@ def inverse_metric_derivatives(
         cosmological_constant,
         wormhole_throat_radius,
         wormhole_length_scale,
+        wormhole_lensing_scale,
     )
     dth = torch.clamp(th_plus - th_minus, min=1.0e-9)
 
@@ -495,8 +570,8 @@ def isco_radius_general(
     KerrTrace and works with (spin, charge, cosmological_constant) combinations.
     """
     model = canonical_metric_model(metric_model)
-    if model == "morris_thorne":
-        raise ValueError("ISCO is not defined for Morris-Thorne wormhole metric")
+    if model in {"morris_thorne", "dneg_wormhole"}:
+        raise ValueError("ISCO is not defined for wormhole metrics")
     horizon = event_horizon_radius(spin, model, charge, cosmological_constant)
     roots = horizon_radii(spin, model, charge, cosmological_constant)
     _, _, lmb = effective_metric_parameters(model, spin, charge, cosmological_constant)

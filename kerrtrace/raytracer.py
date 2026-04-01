@@ -163,9 +163,10 @@ class KerrRayTracer:
             self.config.charge,
             self.config.cosmological_constant,
         )
-        self.is_wormhole = self.config.metric_model == "morris_thorne"
+        self.is_wormhole = self.config.metric_model in {"morris_thorne", "dneg_wormhole"}
         self.wormhole_throat_radius = float(max(1.0e-6, self.config.wormhole_throat_radius))
-        self.wormhole_length_scale = float(max(1.0e-6, self.config.wormhole_length_scale))
+        self.wormhole_length_scale = float(max(0.0, self.config.wormhole_length_scale))
+        self.wormhole_lensing_scale = float(max(1.0e-6, self.config.wormhole_lensing_scale))
         self.enable_disk = bool(self.config.enable_accretion_disk and (not self.is_wormhole))
         self.use_mps_optimized_kernel = bool(
             self.config.mps_optimized_kernel
@@ -794,6 +795,7 @@ class KerrRayTracer:
             cfg.cosmological_constant,
             cfg.wormhole_throat_radius,
             cfg.wormhole_length_scale,
+            cfg.wormhole_lensing_scale,
         )
 
         omega = -metric.g_tphi / torch.clamp(metric.g_phiphi, min=1.0e-9)
@@ -869,6 +871,7 @@ class KerrRayTracer:
             cfg.cosmological_constant,
             cfg.wormhole_throat_radius,
             cfg.wormhole_length_scale,
+            cfg.wormhole_lensing_scale,
         )
         g_tt = metric.g_tt[0]
         g_tphi = metric.g_tphi[0]
@@ -1775,6 +1778,7 @@ class KerrRayTracer:
             self.config.cosmological_constant,
             self.config.wormhole_throat_radius,
             self.config.wormhole_length_scale,
+            self.config.wormhole_lensing_scale,
         )
         d_r, d_theta = inverse_metric_derivatives(
             r,
@@ -1785,6 +1789,7 @@ class KerrRayTracer:
             self.config.cosmological_constant,
             self.config.wormhole_throat_radius,
             self.config.wormhole_length_scale,
+            self.config.wormhole_lensing_scale,
         )
 
         dt = inv.gtt * p_t + inv.gtphi * p_phi
@@ -1851,19 +1856,54 @@ class KerrRayTracer:
         dphi = torch.remainder((phi1 - phi0) + pi, two_pi) - pi
         return phi0 + alpha * dphi
 
-    def _sky_angles_from_state(self, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _mt_impact_parameter_side(self, state: torch.Tensor) -> torch.Tensor:
+        """Return (b - b₀) for each ray in the Morris-Thorne wormhole case.
+
+        b = L_total / E is the ray's impact parameter, where L_total is the
+        conserved total angular momentum and E = -p_t the conserved energy.
+        b₀ = wormhole_throat_radius is the critical impact parameter: rays with
+        b > b₀ do not cross the throat (local side, positive result) and rays
+        with b < b₀ cross it (remote side, negative result).
+
+        Because MT is spherically symmetric, L_total² = p_θ² + p_φ²/sin²θ is a
+        constant of motion and can be evaluated from the final integration state.
+        Using (b − b₀) as the local/remote indicator allows the tanh blend in
+        _star_background to anti-alias both sides of the critical curve
+        symmetrically, unlike r_min which saturates at ±escape_radius for all
+        non-grazing rays and gives a binary result.
+        """
+        p_t = state[:, 4]
+        p_theta = state[:, 6]
+        p_phi = state[:, 7]
+        sin2_theta = torch.clamp(torch.sin(state[:, 2]) ** 2, min=1.0e-9)
+        L_total_sq = torch.clamp(p_theta * p_theta + p_phi * p_phi / sin2_theta, min=0.0)
+        L_total = torch.sqrt(L_total_sq)
+        E = torch.clamp(torch.abs(p_t), min=1.0e-9)
+        b = L_total / E
+        b0 = torch.as_tensor(
+            float(self.config.wormhole_throat_radius), dtype=self.dtype, device=self.device
+        )
+        return b - b0
+
+    def _sky_angles_from_state(
+        self,
+        state: torch.Tensor,
+        r_min: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.is_wormhole and bool(self.config.wormhole_mt_sky_sample_from_xyz):
             sky_xyz = self._bl_to_cartesian(state[:, 1], state[:, 2], state[:, 3])
             sky_norm = torch.clamp(torch.linalg.norm(sky_xyz, dim=-1), min=1.0e-8)
             sky_theta = torch.acos(torch.clamp(sky_xyz[:, 2] / sky_norm, min=-1.0, max=1.0))
             sky_theta = torch.clamp(sky_theta, min=THETA_EPS, max=math.pi - THETA_EPS)
             sky_phi = torch.remainder(torch.atan2(sky_xyz[:, 1], sky_xyz[:, 0]), 2.0 * self.pi)
-            sky_side = state[:, 1]
+            sky_side = self._mt_impact_parameter_side(state) if self.is_wormhole else state[:, 1]
             return sky_theta, sky_phi, sky_side
 
         sky_theta = torch.clamp(state[:, 2], min=THETA_EPS, max=math.pi - THETA_EPS)
         sky_phi = torch.remainder(state[:, 3], 2.0 * self.pi)
-        sky_side = state[:, 1]
+        # For Morris-Thorne: use (b − b₀) so the tanh blend in _star_background
+        # gives symmetric anti-aliasing on both sides of the critical curve.
+        sky_side = self._mt_impact_parameter_side(state) if self.is_wormhole else state[:, 1]
         return sky_theta, sky_phi, sky_side
 
     def _apply_radial_domain(self, state: torch.Tensor) -> torch.Tensor:
@@ -2619,6 +2659,7 @@ class KerrRayTracer:
                 self.config.cosmological_constant,
                 self.config.wormhole_throat_radius,
                 self.config.wormhole_length_scale,
+                self.config.wormhole_lensing_scale,
             )
         gtt = metric.g_tt
         gtphi = metric.g_tphi
@@ -3400,23 +3441,22 @@ class KerrRayTracer:
                 exposure=float(self.config.wormhole_remote_hdri_exposure),
                 rotation_deg=float(self.config.wormhole_remote_hdri_rotation_deg),
             )
-        if bool(self.config.wormhole_background_continuous_blend):
-            blend_w = torch.as_tensor(
-                max(1.0e-6, float(self.config.wormhole_background_blend_width)),
-                dtype=self.dtype,
-                device=self.device,
-            )
-            # Smooth local<->remote transition around the throat (r=0).
-            remote_w = 0.5 * (1.0 - torch.tanh(side_sign / blend_w))
-            remote_w = torch.clamp(remote_w, min=0.0, max=1.0)
-            if remote_w.ndim == 1:
-                remote_w = remote_w.unsqueeze(-1)
-            return local * (1.0 - remote_w) + remote * remote_w
-
-        remote_mask = side_sign < 0.0
-        if remote_mask.ndim == 1:
-            remote_mask = remote_mask.unsqueeze(-1)
-        return torch.where(remote_mask, remote, local)
+        # Always apply a smooth blend for Morris-Thorne wormholes.
+        # side_sign here is r_min (minimum proper-distance coordinate reached during
+        # integration), so tanh(r_min / blend_w) transitions smoothly through 0 at
+        # the throat, anti-aliasing the critical-curve seam that appeared as a hard
+        # vertical bar when the final r value (±escape_radius) was used instead.
+        # wormhole_background_continuous_blend now controls blend width only.
+        blend_w = torch.as_tensor(
+            max(1.0e-6, float(self.config.wormhole_background_blend_width)),
+            dtype=self.dtype,
+            device=self.device,
+        )
+        remote_w = 0.5 * (1.0 - torch.tanh(side_sign / blend_w))
+        remote_w = torch.clamp(remote_w, min=0.0, max=1.0)
+        if remote_w.ndim == 1:
+            remote_w = remote_w.unsqueeze(-1)
+        return local * (1.0 - remote_w) + remote * remote_w
 
     def _trace(
         self,
@@ -3948,7 +3988,7 @@ class KerrRayTracer:
                 hit_horizon[captured] = True
                 escaped[captured] = False
 
-        sky_theta, sky_phi, sky_side = self._sky_angles_from_state(state)
+        sky_theta, sky_phi, sky_side = self._sky_angles_from_state(state, r_min=r_min)
         return (
             hit_disk,
             hit_emitter,
@@ -4938,6 +4978,7 @@ class KerrRayTracer:
                 cfg.cosmological_constant,
                 cfg.wormhole_throat_radius,
                 cfg.wormhole_length_scale,
+                cfg.wormhole_lensing_scale,
             )
 
             omega = (
@@ -5239,6 +5280,83 @@ class KerrRayTracer:
                 blend = 0.5 * (rgb[:, left, :] + rgb[:, right, :])
                 out[:, col, :] = (1.0 - alpha) * rgb[:, col, :] + alpha * blend
         return out
+
+    def _meridian_destripe_passes(self) -> int:
+        """Return how many seam-destripe passes to apply on the final RGB."""
+        if self.is_wormhole:
+            # Morris-Thorne is more prone to vertical seam artifacts around the
+            # local/remote sky transition, so apply a stronger default cleanup.
+            return 2
+        if self.config.destripe_meridian:
+            return 1
+        return 0
+
+    def _wormhole_mt_beam_offsets(self) -> list[float]:
+        samples = max(0, min(4, int(self.config.wormhole_mt_beam_samples)))
+        if samples <= 0:
+            return []
+        jitter = float(self.config.wormhole_mt_beam_jitter)
+        # Symmetric horizontal jitter pattern around the camera center ray.
+        base = [1.0, -1.0, 0.5, -0.5, 0.75, -0.75, 0.25, -0.25]
+        count = min(len(base), 2 * samples)
+        return [jitter * base[i] for i in range(count)]
+
+    def _build_wormhole_mt_beam_mask(
+        self,
+        rgb: torch.Tensor,
+        escaped_mask: torch.Tensor | None = None,
+        hit_horizon_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        h = int(rgb.shape[0])
+        w = int(rgb.shape[1])
+        if (not self.is_wormhole) or w < 12 or h < 12:
+            return torch.zeros((h, w), dtype=torch.bool, device=rgb.device)
+
+        edge = torch.mean(torch.abs(rgb - torch.roll(rgb, shifts=1, dims=1)), dim=(0, 2))
+        finite = torch.isfinite(edge)
+        if not bool(torch.any(finite)):
+            return torch.zeros((h, w), dtype=torch.bool, device=rgb.device)
+        edge = torch.where(finite, edge, torch.zeros_like(edge))
+
+        edge_med = float(torch.median(edge).item())
+        edge_peak = float(torch.max(edge).item())
+        if (not math.isfinite(edge_peak)) or edge_peak <= 0.0:
+            return torch.zeros((h, w), dtype=torch.bool, device=rgb.device)
+
+        threshold_ratio = float(self.config.wormhole_mt_beam_threshold)
+        threshold_value = max(1.0e-6, edge_med * threshold_ratio)
+        seam_cols = edge >= threshold_value
+
+        if not bool(torch.any(seam_cols)):
+            fallback_gate = edge_med * max(1.15, 0.80 * threshold_ratio) + 1.0e-4
+            if edge_peak <= fallback_gate:
+                return torch.zeros((h, w), dtype=torch.bool, device=rgb.device)
+            seam_cols = torch.zeros((w,), dtype=torch.bool, device=rgb.device)
+            seam_cols[int(torch.argmax(edge).item())] = True
+
+        seam_indices = torch.nonzero(seam_cols, as_tuple=False).squeeze(-1)
+        if int(seam_indices.numel()) > 3:
+            topk = torch.topk(edge, k=3, largest=True).indices
+            seam_indices = topk
+
+        band_halfwidth = int(self.config.wormhole_mt_beam_band_halfwidth)
+        col_mask = torch.zeros((w,), dtype=torch.bool, device=rgb.device)
+        for seam_col_t in seam_indices:
+            seam_col = int(seam_col_t.item())
+            for off in range(-band_halfwidth, band_halfwidth + 1):
+                col_mask[(seam_col + off) % w] = True
+        mask2d = col_mask.unsqueeze(0).expand(h, w)
+
+        trace_mask: torch.Tensor | None = None
+        if escaped_mask is not None and escaped_mask.numel() == h * w:
+            trace_mask = escaped_mask.reshape(h, w)
+        if hit_horizon_mask is not None and hit_horizon_mask.numel() == h * w:
+            hit2d = hit_horizon_mask.reshape(h, w)
+            trace_mask = hit2d if trace_mask is None else (trace_mask | hit2d)
+        if trace_mask is not None and bool(torch.any(trace_mask)):
+            mask2d = mask2d & trace_mask
+
+        return mask2d
 
     def _adaptive_row_scales_from_preview(
         self,
@@ -5775,13 +5893,56 @@ class KerrRayTracer:
             finally:
                 self.config = cfg_render_base
 
-        if self.config.destripe_meridian:
+        beam_enabled = bool(
+            self.is_wormhole
+            and cfg_render_base.wormhole_mt_beam_supersampling
+            and int(cfg_render_base.wormhole_mt_beam_samples) > 0
+        )
+        if beam_enabled:
+            try:
+                self.config = cfg_render_base
+                beam_mask = self._build_wormhole_mt_beam_mask(
+                    rgb,
+                    escaped_mask=escaped,
+                    hit_horizon_mask=hit_horizon,
+                )
+                if bool(torch.any(beam_mask)):
+                    offsets = self._wormhole_mt_beam_offsets()
+                    if offsets:
+                        accum = rgb.clone()
+                        for x_off in offsets:
+                            for block_index, (row_start, row_end) in enumerate(row_blocks):
+                                if row_step_overrides is not None:
+                                    target_steps = int(row_step_overrides[block_index])
+                                    if int(self.config.max_steps) != target_steps:
+                                        self.config = replace(cfg_render_base, max_steps=target_steps)
+                                elif self.config is not cfg_render_base:
+                                    self.config = cfg_render_base
+                                block_rgb, _, _, _, _, local_steps_used = _trace_and_shade_block(
+                                    row_start=row_start,
+                                    row_end=row_end,
+                                    use_meridian=bool(cfg_render_base.meridian_supersample),
+                                    x_offset_extra=float(x_off),
+                                    y_offset_extra=0.0,
+                                )
+                                accum[row_start:row_end, :, :] = accum[row_start:row_end, :, :] + block_rgb
+                                steps_used = max(steps_used, int(local_steps_used))
+                        refined = accum / float(1 + len(offsets))
+                        rgb = torch.where(beam_mask.unsqueeze(-1), refined, rgb)
+            except Exception:
+                pass
+            finally:
+                self.config = cfg_render_base
+
+        destripe_passes = int(self._meridian_destripe_passes())
+        if destripe_passes > 0:
             seam_mask = escaped | hit_horizon
-            rgb = self._destripe_meridian(
-                rgb,
-                escaped_mask=seam_mask,
-                force=False,
-            )
+            for _ in range(destripe_passes):
+                rgb = self._destripe_meridian(
+                    rgb,
+                    escaped_mask=seam_mask,
+                    force=False,
+                )
 
         try:
             self._last_rgb_float = self._apply_postprocess_pipeline(rgb).detach().to(device="cpu", dtype=torch.float32).contiguous()
