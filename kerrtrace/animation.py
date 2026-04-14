@@ -8,6 +8,7 @@ from pathlib import Path
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -255,6 +256,7 @@ def _render_frames(
     save_frames: bool = True,
     adaptive_frame_steps: bool = True,
     adaptive_frame_steps_min_scale: float = 0.60,
+    progress_callback: Callable[[int, int, int, int, int], None] | None = None,
 ) -> None:
     two_pi = 2.0 * math.pi
     if save_frames:
@@ -402,7 +404,11 @@ def _render_frames(
             tracer_tls.tracer = tracer
         return tracer
 
-    def _render_single(index: int, tracer: KerrRayTracer | None = None) -> tuple[int, RenderConfig, np.ndarray]:
+    def _render_single(
+        index: int,
+        tracer: KerrRayTracer | None = None,
+        row_units_callback: Callable[[int, int], None] | None = None,
+    ) -> tuple[int, RenderConfig, np.ndarray]:
         phase = 0.0 if frames == 1 else index / (frames - 1)
         nominal_cfg = config_at_phase(phase)
         accum: np.ndarray | None = None
@@ -426,6 +432,13 @@ def _render_frames(
                 max_steps=frame_steps,
                 disk_layer_global_phase=frame_config.disk_layer_global_phase,
             )
+            sample_rows_total = max(1, int(frame_config.height))
+            frame_units_total = max(1, int(taa_samples) * sample_rows_total)
+            if row_units_callback is not None:
+                try:
+                    row_units_callback(sample_idx * sample_rows_total, frame_units_total)
+                except Exception:
+                    pass
 
             x_jitter = 0.0
             y_jitter = 0.0
@@ -434,7 +447,28 @@ def _render_frames(
                 x_jitter = (2.0 * _radical_inverse(j, 2) - 1.0) * jitter_strength
                 y_jitter = (2.0 * _radical_inverse(j, 3) - 1.0) * jitter_strength
 
-            result = work_tracer.render(x_pixel_offset=x_jitter, y_pixel_offset=y_jitter)
+            row_progress_cb: Callable[[int, int], None] | None = None
+            if row_units_callback is not None:
+
+                def _on_rows(rows_done: int, rows_total: int, sample_offset: int = sample_idx) -> None:
+                    rows_total_i = max(1, int(rows_total))
+                    rows_done_i = max(0, min(rows_total_i, int(rows_done)))
+                    total_units_i = max(1, int(taa_samples) * rows_total_i)
+                    done_units_i = min(total_units_i, sample_offset * rows_total_i + rows_done_i)
+                    row_units_callback(done_units_i, total_units_i)
+
+                row_progress_cb = _on_rows
+
+            result = work_tracer.render(
+                x_pixel_offset=x_jitter,
+                y_pixel_offset=y_jitter,
+                row_progress_callback=row_progress_cb,
+            )
+            if row_units_callback is not None:
+                try:
+                    row_units_callback((sample_idx + 1) * sample_rows_total, frame_units_total)
+                except Exception:
+                    pass
             rgb = np.asarray(result.image, dtype=np.float32)
             del result
             if accum is None:
@@ -450,12 +484,15 @@ def _render_frames(
     frame_retry_attempts = 2
     slow_frame_warn_seconds = 180.0
 
-    def _render_single_with_retry(index: int) -> tuple[int, RenderConfig, np.ndarray, float, int]:
+    def _render_single_with_retry(
+        index: int,
+        row_units_callback: Callable[[int, int], None] | None = None,
+    ) -> tuple[int, RenderConfig, np.ndarray, float, int]:
         last_exc: Exception | None = None
         for attempt in range(1, frame_retry_attempts + 1):
             t_frame = time.perf_counter()
             try:
-                idx, nominal_cfg, avg = _render_single(index)
+                idx, nominal_cfg, avg = _render_single(index, row_units_callback=row_units_callback)
                 dt = time.perf_counter() - t_frame
                 if dt >= slow_frame_warn_seconds:
                     print(
@@ -476,16 +513,43 @@ def _render_frames(
     pending_indices = list(range(frames))
     if resume_frames:
         pending_indices = [idx for idx in pending_indices if not (frames_dir / f"frame_{idx:05d}.png").exists()]
-        if not pending_indices:
-            print(f"All {frames} frames already present in {frames_dir}; skipping render.")
-            return
         pending_indices.sort(key=_frame_priority, reverse=True)
+
+    initial_completed_frames = max(0, frames - len(pending_indices))
+
+    def _emit_frame_progress(
+        current_frame_one_based: int,
+        completed_frames: int,
+        frame_units_done: int,
+        frame_units_total: int,
+    ) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(
+                max(0, int(current_frame_one_based)),
+                max(0, int(completed_frames)),
+                int(frames),
+                max(0, int(frame_units_done)),
+                max(1, int(frame_units_total)),
+            )
+        except Exception:
+            # External progress sinks are best-effort only.
+            pass
+
+    _emit_frame_progress(0, initial_completed_frames, 0, 1)
+
+    if resume_frames and (not pending_indices):
+        print(f"All {frames} frames already present in {frames_dir}; skipping render.")
+        _emit_frame_progress(0, frames, 1, 1)
+        return
 
     can_parallel = (
         workers > 1
         and (not base_config.temporal_reprojection)
         and frame_sink is None
         and save_frames
+        and progress_callback is None
     )
     if can_parallel:
         parallel_t0 = time.perf_counter()
@@ -521,14 +585,25 @@ def _render_frames(
     sequential_t0 = time.perf_counter()
     rendered_done = 0
     total_to_render = len(pending_indices)
+    completed_frames = initial_completed_frames
     for index in range(frames):
         frame_path = frames_dir / f"frame_{index:05d}.png"
         if resume_frames and frame_path.exists():
             print(f"Frame {index + 1}/{frames}: {frame_path} (existing, skipped)")
             continue
+        frame_units_total_guess = max(1, int(taa_samples) * int(base_config.height))
+        _emit_frame_progress(index + 1, completed_frames, 0, frame_units_total_guess)
+
+        def _row_units_callback(units_done: int, units_total: int, idx_one_based: int = index + 1) -> None:
+            _emit_frame_progress(idx_one_based, completed_frames, units_done, units_total)
+
         t_frame = time.perf_counter()
         try:
-            idx, nominal_cfg, avg_u8 = _render_single(index, tracer=sequential_tracer)
+            idx, nominal_cfg, avg_u8 = _render_single(
+                index,
+                tracer=sequential_tracer,
+                row_units_callback=_row_units_callback,
+            )
             frame_dt = time.perf_counter() - t_frame
             attempts = 1
             index = idx
@@ -539,7 +614,10 @@ def _render_frames(
                 )
         except Exception as exc:
             print(f"Frame {index + 1}/{frames}: sequential reusable tracer failed, fallback to retry path: {exc}")
-            index, nominal_cfg, avg_u8, frame_dt, attempts = _render_single_with_retry(index)
+            index, nominal_cfg, avg_u8, frame_dt, attempts = _render_single_with_retry(
+                index,
+                row_units_callback=_row_units_callback,
+            )
         avg = avg_u8.astype(np.float32)
         if base_config.temporal_reprojection and prev_temporal is not None and prev_temporal_cfg is not None:
             avg = _apply_temporal_denoise(
@@ -562,6 +640,7 @@ def _render_frames(
         if frame_sink is not None:
             frame_sink(index, out_u8)
         rendered_done += 1
+        completed_frames += 1
         eta_seconds: float | None = None
         if 0 < rendered_done < total_to_render:
             elapsed = max(1.0e-6, time.perf_counter() - sequential_t0)
@@ -571,6 +650,9 @@ def _render_frames(
             f"Frame {index + 1}/{frames}: {frame_label} | frame {frame_dt:.2f}s"
             f"{retry_txt} | ETA ~{_format_eta(eta_seconds)}"
         )
+        _emit_frame_progress(index + 1, completed_frames, frame_units_total_guess, frame_units_total_guess)
+
+    _emit_frame_progress(0, frames, 1, 1)
 
 
 
@@ -579,24 +661,29 @@ def _encode_gif(frames_dir: Path, output_path: Path, fps: int) -> None:
     if not frame_paths:
         raise RuntimeError("No frames found for GIF encoding")
 
-    images: list[Image.Image] = []
-    try:
-        for path in frame_paths:
-            images.append(Image.open(path).convert("RGB"))
+    duration_ms = max(1, int(round(1000.0 / fps)))
 
-        duration_ms = max(1, int(round(1000.0 / fps)))
-        images[0].save(
+    def _lazy_rest():
+        for path in frame_paths[1:]:
+            img = Image.open(path).convert("RGB")
+            try:
+                yield img
+            finally:
+                img.close()
+
+    first = Image.open(frame_paths[0]).convert("RGB")
+    try:
+        first.save(
             output_path,
             save_all=True,
-            append_images=images[1:],
+            append_images=_lazy_rest(),
             duration=duration_ms,
             loop=0,
             optimize=False,
             disposal=2,
         )
     finally:
-        for image in images:
-            image.close()
+        first.close()
 
 
 
@@ -735,6 +822,7 @@ def render_animation(
     stream_encode: bool = True,
     stream_encode_async: bool = True,
     stream_encode_queue_size: int = 4,
+    progress_window: bool | None = None,
 ) -> AnimationStats:
     cfg = base_config.validated()
     target = Path(output_path)
@@ -810,6 +898,37 @@ def render_animation(
     stream_q: queue.Queue[np.ndarray | None] | None = None
     stream_writer: threading.Thread | None = None
     stream_errors: list[Exception] = []
+    progress_ui = None
+
+    progress_window_enabled = bool(progress_window) if progress_window is not None else bool(render_frames and sys.stdout.isatty())
+    if progress_window_enabled and render_frames:
+        try:
+            from .progress_window import RenderProgressWindow
+
+            progress_ui = RenderProgressWindow(title=f"KerrTrace Render - {target.name}")
+            if not progress_ui.available:
+                progress_ui = None
+        except Exception:
+            progress_ui = None
+        if progress_ui is None and progress_window:
+            print("Progress window unavailable in this environment; continuing with terminal progress only.")
+
+    def _progress_sink(
+        current_frame_one_based: int,
+        completed_frames: int,
+        total_frames: int,
+        frame_units_done: int,
+        frame_units_total: int,
+    ) -> None:
+        if progress_ui is None:
+            return
+        progress_ui.update(
+            current_frame=current_frame_one_based,
+            completed_frames=completed_frames,
+            total_frames=total_frames,
+            frame_units_done=frame_units_done,
+            frame_units_total=frame_units_total,
+        )
 
     def _start_async_stream_writer(proc: subprocess.Popen[bytes], qsize: int) -> tuple[queue.Queue[np.ndarray | None], threading.Thread]:
         if proc.stdin is None:
@@ -890,6 +1009,7 @@ def render_animation(
                 save_frames=save_frames,
                 adaptive_frame_steps=adaptive_frame_steps,
                 adaptive_frame_steps_min_scale=adaptive_frame_steps_min_scale,
+                progress_callback=_progress_sink if progress_ui is not None else None,
             )
 
         if allow_stream and stream_proc is not None:
@@ -920,6 +1040,8 @@ def render_animation(
             else:
                 raise ValueError("Unsupported animation output extension. Use .mp4, .mov, .mkv, or .gif")
     finally:
+        if progress_ui is not None:
+            progress_ui.close()
         if stream_q is not None:
             try:
                 stream_q.put_nowait(None)

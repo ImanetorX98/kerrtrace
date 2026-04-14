@@ -821,6 +821,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Adaptive min scale": "Scala minima adattiva",
         "Adaptive quantile": "Quantile adattivo",
         "Render tile rows (0=auto)": "Righe tile render (0=auto)",
+        "Low-memory spool (tile to disk)": "Spool low-memory (tile su disco)",
         "Postprocess pipeline": "Pipeline postprocess",
         "Gargantua look strength": "Intensita' look Gargantua",
         "Background": "Sfondo",
@@ -927,6 +928,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Adaptive min scale": "Adaptive Mindest-Skalierung",
         "Adaptive quantile": "Adaptives Quantil",
         "Render tile rows (0=auto)": "Render-Kachelzeilen (0=auto)",
+        "Low-memory spool (tile to disk)": "Low-Memory-Spool (Kacheln auf Festplatte)",
         "Postprocess pipeline": "Postprozess-Pipeline",
         "Gargantua look strength": "Gargantua-Look-Stärke",
         "Background": "Hintergrund",
@@ -1131,6 +1133,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Adaptive min scale": "Scală minimă adaptivă",
         "Adaptive quantile": "Cuantilă adaptivă",
         "Render tile rows (0=auto)": "Rânduri tile randare (0=auto)",
+        "Low-memory spool (tile to disk)": "Spool low-memory (tile pe disc)",
         "Postprocess pipeline": "Pipeline postprocesare",
         "Gargantua look strength": "Intensitate look Gargantua",
         "Background": "Fundal",
@@ -1237,6 +1240,7 @@ FIELD_I18N: dict[str, dict[str, str]] = {
         "Adaptive min scale": "自适应最小缩放",
         "Adaptive quantile": "自适应分位数",
         "Render tile rows (0=auto)": "渲染分块行数（0=自动）",
+        "Low-memory spool (tile to disk)": "低内存缓冲（分块写盘）",
         "Postprocess pipeline": "后处理流程",
         "Gargantua look strength": "Gargantua 风格强度",
         "Background": "背景",
@@ -3077,6 +3081,7 @@ div[data-testid="stNumberInput"] button svg {
     cfg_seed.setdefault("animation_workers", int(default_cfg.get("animation_workers", 1)))
     cfg_seed.setdefault("stream_encode_async", bool(default_cfg.get("stream_encode_async", True)))
     cfg_seed.setdefault("stream_encode_queue_size", int(default_cfg.get("stream_encode_queue_size", 4)))
+    cfg_seed.setdefault("low_memory_spool", bool(default_cfg.get("low_memory_spool", False)))
     cfg_seed.setdefault("mps_auto_chunking", bool(default_cfg.get("mps_auto_chunking", True)))
 
     workspace_path_preview = workspace_sidebar
@@ -3873,6 +3878,10 @@ div[data-testid="stNumberInput"] button svg {
                 value=int(cfg_seed["render_tile_rows"]),
                 step=8,
             )
+            low_memory_spool = st.checkbox(
+                tfield(lang, "Low-memory spool (tile to disk)"),
+                value=bool(cfg_seed.get("low_memory_spool", False)),
+            )
             postprocess_pipeline = st.selectbox(
                 tfield(lang, "Postprocess pipeline"),
                 options=CHOICE_FIELDS["postprocess_pipeline"],
@@ -4410,6 +4419,7 @@ div[data-testid="stNumberInput"] button svg {
             "stream_encode_async": bool(stream_encode_async),
             "stream_encode_queue_size": int(stream_encode_queue_size),
             "render_tile_rows": int(render_tile_rows),
+            "low_memory_spool": bool(low_memory_spool),
             "postprocess_pipeline": postprocess_pipeline,
             "gargantua_look_strength": float(gargantua_look_strength),
             "background_mode": background_mode,

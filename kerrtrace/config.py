@@ -43,6 +43,9 @@ class RenderConfig:
     wormhole_length_scale: float = 1.0
     wormhole_lensing_scale: float = 1.0
     wormhole_allow_throat_crossing: bool = False
+    wormhole_seam_remove: bool = True
+    wormhole_seam_sigma: float = 30.0
+    wormhole_seam_blend_half: int = 60
     observer_radius: float = 30.0
     observer_inclination_deg: float = 80.0
     observer_azimuth_deg: float = 0.0
@@ -113,6 +116,13 @@ class RenderConfig:
     disk_structure_mode: str = "continuous"
     disk_annuli_count: int = 48
     disk_annuli_blend: float = 1.0
+    disk_segmented_palette: bool = False
+    disk_segmented_rings: int = 3
+    disk_segmented_sectors: int = 12
+    disk_segmented_sigma: float = 0.5
+    disk_segmented_mix: float = 1.0
+    disk_segmented_hue_offset: float = 0.0
+    disk_segmented_palette_mode: str = "rainbow"
     thick_disk: bool = False
     disk_thickness_ratio: float = 0.12
     disk_thickness_power: float = 0.0
@@ -186,6 +196,7 @@ class RenderConfig:
     show_progress_bar: bool = True
     progress_backend: str = "manual"
     animation_workers: int = 1
+    low_memory_spool: bool = True
     stream_encode_async: bool = True
     stream_encode_queue_size: int = 4
     quality_lock: bool = False
@@ -448,6 +459,16 @@ class RenderConfig:
             raise ValueError("disk_annuli_count must be in [4, 4096]")
         if cfg.disk_annuli_blend < 0.0 or cfg.disk_annuli_blend > 1.0:
             raise ValueError("disk_annuli_blend must be in [0, 1]")
+        if cfg.disk_segmented_rings < 1 or cfg.disk_segmented_rings > 64:
+            raise ValueError("disk_segmented_rings must be in [1, 64]")
+        if cfg.disk_segmented_sectors < 2 or cfg.disk_segmented_sectors > 256:
+            raise ValueError("disk_segmented_sectors must be in [2, 256]")
+        if cfg.disk_segmented_sigma <= 0.0 or cfg.disk_segmented_sigma > 4.0:
+            raise ValueError("disk_segmented_sigma must be in (0, 4]")
+        if cfg.disk_segmented_mix < 0.0 or cfg.disk_segmented_mix > 1.0:
+            raise ValueError("disk_segmented_mix must be in [0, 1]")
+        if cfg.disk_segmented_palette_mode not in {"rainbow", "accretion_warm"}:
+            raise ValueError("disk_segmented_palette_mode must be 'rainbow' or 'accretion_warm'")
         if cfg.disk_emission_gain < 0.1 or cfg.disk_emission_gain > 1000.0:
             raise ValueError("disk_emission_gain must be in [0.1, 1000.0]")
         if cfg.disk_color_correction < 1.0 or cfg.disk_color_correction > 4.0:

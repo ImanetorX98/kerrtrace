@@ -102,6 +102,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--wormhole-lensing-scale", type=float)
     parser.add_argument("--enable-wormhole-throat-crossing", action="store_true")
     parser.add_argument("--disable-wormhole-throat-crossing", action="store_true")
+    parser.add_argument("--enable-wormhole-seam-remove", action="store_true")
+    parser.add_argument("--disable-wormhole-seam-remove", action="store_true")
+    parser.add_argument("--wormhole-seam-sigma", type=float)
+    parser.add_argument("--wormhole-seam-blend-half", type=int)
     parser.add_argument("--observer-radius", type=float)
     parser.add_argument("--observer-inclination-deg", type=float)
     parser.add_argument("--observer-azimuth-deg", type=float)
@@ -168,6 +172,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disk-layer-accident-strength", type=float)
     parser.add_argument("--disk-layer-accident-count", type=float)
     parser.add_argument("--disk-layer-accident-sharpness", type=float)
+    parser.add_argument("--enable-disk-segmented-palette", action="store_true", help="Enable segmented color-wheel disk palette")
+    parser.add_argument("--disable-disk-segmented-palette", action="store_true")
+    parser.add_argument("--disk-segmented-rings", type=int, help="Number of concentric rings (default 3)")
+    parser.add_argument("--disk-segmented-sectors", type=int, help="Number of azimuthal sectors per ring (default 12)")
+    parser.add_argument("--disk-segmented-sigma", type=float, help="Gaussian blend width in cell units (default 0.5)")
+    parser.add_argument("--disk-segmented-mix", type=float, help="Blend fraction over physical color 0-1 (default 1.0)")
+    parser.add_argument("--disk-segmented-hue-offset", type=float, help="Global hue rotation 0-1 (default 0.0)")
+    parser.add_argument("--disk-segmented-palette-mode", choices=["rainbow", "accretion_warm"], help="Color palette for segments (default: rainbow)")
     parser.add_argument("--enable-disk-differential-rotation", action="store_true")
     parser.add_argument("--disable-disk-differential-rotation", action="store_true")
     parser.add_argument("--disk-diffrot-model", choices=["keplerian_lut", "keplerian_metric"])
@@ -349,6 +361,16 @@ def _parse_args() -> argparse.Namespace:
         help="Progress renderer backend (manual custom bar or tqdm)",
     )
     parser.add_argument("--animation-workers", type=int, help="Parallel frame workers for CPU animation")
+    parser.add_argument(
+        "--enable-low-memory-spool",
+        action="store_true",
+        help="Stream per-tile RGB blocks to a temporary on-disk buffer to reduce peak RAM/GPU usage",
+    )
+    parser.add_argument(
+        "--disable-low-memory-spool",
+        action="store_true",
+        help="Disable low-memory tile spool mode",
+    )
     parser.add_argument("--enable-quality-lock", action="store_true", help="Compare optimized KS mode vs baseline before final render")
     parser.add_argument("--disable-quality-lock-fallback", action="store_true", help="Do not fallback to baseline if quality lock fails")
     parser.add_argument("--quality-lock-psnr-min", type=float)
@@ -449,6 +471,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--resume-frames", action="store_true", help="Reuse existing frame_XXXXX.png files and render only missing ones")
     parser.add_argument("--render-frames-only", action="store_true", help="Render PNG frame sequence and skip encoding")
     parser.add_argument("--encode-frames-only", action="store_true", help="Encode existing PNG frame sequence without rendering")
+    parser.add_argument(
+        "--progress-window",
+        action="store_true",
+        help="Open a detachable render progress window (minimizable to icon)",
+    )
+    parser.add_argument(
+        "--no-progress-window",
+        action="store_true",
+        help="Disable the render progress window",
+    )
     parser.add_argument("--particle-count", type=int, default=240, help="Number of massive particles in charged-particle animation")
     parser.add_argument("--particle-specific-charge", type=float, default=0.4, help="Absolute specific charge |q/m| for particles")
     parser.add_argument("--particle-speed", type=float, default=0.42, help="Initial azimuthal speed in local ZAMO frame")
@@ -537,6 +569,12 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "disk_layer_accident_strength": args.disk_layer_accident_strength,
         "disk_layer_accident_count": args.disk_layer_accident_count,
         "disk_layer_accident_sharpness": args.disk_layer_accident_sharpness,
+        "disk_segmented_rings": args.disk_segmented_rings,
+        "disk_segmented_sectors": args.disk_segmented_sectors,
+        "disk_segmented_sigma": args.disk_segmented_sigma,
+        "disk_segmented_mix": args.disk_segmented_mix,
+        "disk_segmented_hue_offset": args.disk_segmented_hue_offset,
+        "disk_segmented_palette_mode": args.disk_segmented_palette_mode,
         "disk_diffrot_model": args.disk_diffrot_model,
         "disk_diffrot_visual_mode": args.disk_diffrot_visual_mode,
         "disk_diffrot_strength": args.disk_diffrot_strength,
@@ -599,6 +637,7 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "adaptive_spatial_quantile": args.adaptive_spatial_quantile,
         "progress_backend": args.progress_backend,
         "animation_workers": args.animation_workers,
+        "low_memory_spool": None,
         "stream_encode_queue_size": args.stream_encode_queue_size,
         "quality_lock_psnr_min": args.quality_lock_psnr_min,
         "quality_lock_ssim_min": args.quality_lock_ssim_min,
@@ -646,6 +685,14 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["wormhole_mt_sky_sample_from_xyz"] = True
     if args.disable_wormhole_mt_sky_from_xyz:
         updates["wormhole_mt_sky_sample_from_xyz"] = False
+    if args.enable_wormhole_seam_remove:
+        updates["wormhole_seam_remove"] = True
+    if args.disable_wormhole_seam_remove:
+        updates["wormhole_seam_remove"] = False
+    if args.wormhole_seam_sigma is not None:
+        updates["wormhole_seam_sigma"] = args.wormhole_seam_sigma
+    if args.wormhole_seam_blend_half is not None:
+        updates["wormhole_seam_blend_half"] = args.wormhole_seam_blend_half
     if args.enable_wormhole_mt_beam_supersampling:
         updates["wormhole_mt_beam_supersampling"] = True
     if args.disable_wormhole_mt_beam_supersampling:
@@ -673,6 +720,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["disk_layered_palette"] = True
     if args.disable_disk_layered_palette:
         updates["disk_layered_palette"] = False
+    if args.enable_disk_segmented_palette:
+        updates["disk_segmented_palette"] = True
+    if args.disable_disk_segmented_palette:
+        updates["disk_segmented_palette"] = False
     if args.enable_disk_differential_rotation:
         updates["enable_disk_differential_rotation"] = True
     if args.disable_disk_differential_rotation:
@@ -760,6 +811,10 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["stream_encode_async"] = False
     if args.enable_stream_encode_async:
         updates["stream_encode_async"] = True
+    if args.enable_low_memory_spool:
+        updates["low_memory_spool"] = True
+    if args.disable_low_memory_spool:
+        updates["low_memory_spool"] = False
     return replace(base, **updates)
 
 
@@ -922,11 +977,18 @@ def main() -> int:
             raise ValueError("--encode-frames-only requires --frames-dir")
         if args.encode_frames_only and args.render_frames_only:
             raise ValueError("Cannot combine --encode-frames-only with --render-frames-only")
+        if args.progress_window and args.no_progress_window:
+            raise ValueError("Cannot combine --progress-window with --no-progress-window")
         stream_encode = True
         if args.disable_stream_encode:
             stream_encode = False
         if args.enable_stream_encode:
             stream_encode = True
+        progress_window: bool | None = None
+        if args.progress_window:
+            progress_window = True
+        if args.no_progress_window:
+            progress_window = False
         stats = render_animation(
             base_config=config,
             output_path=config.output,
@@ -957,6 +1019,7 @@ def main() -> int:
             stream_encode=stream_encode,
             stream_encode_async=config.stream_encode_async,
             stream_encode_queue_size=config.stream_encode_queue_size,
+            progress_window=progress_window,
         )
         print(f"Saved animation: {stats.output_path}")
         print(f"Frames: {stats.frames} | FPS: {stats.fps} | Time: {stats.elapsed_seconds:.2f}s")

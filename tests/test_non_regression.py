@@ -94,6 +94,76 @@ class NonRegressionTests(unittest.TestCase):
         mae = float(np.mean(np.abs(base_img - adaptive_img)))
         self.assertLess(mae, 18.0)
 
+    def test_low_memory_spool_matches_standard_path(self) -> None:
+        base_cfg = RenderConfig(
+            width=96,
+            height=64,
+            coordinate_system="boyer_lindquist",
+            metric_model="kerr",
+            spin=0.88,
+            observer_radius=34.0,
+            observer_inclination_deg=78.0,
+            disk_outer_radius=10.5,
+            disk_model="physical_nt",
+            disk_radial_profile="nt_page_thorne",
+            adaptive_integrator=False,
+            max_steps=96,
+            step_size=0.24,
+            device="cpu",
+            dtype="float32",
+            show_progress_bar=False,
+            render_tile_rows=24,
+            low_memory_spool=False,
+            postprocess_pipeline="off",
+            gargantua_look_strength=0.0,
+        ).validated()
+        spool_cfg = RenderConfig(
+            **{
+                **base_cfg.__dict__,
+                "low_memory_spool": True,
+            }
+        ).validated()
+
+        base_img = np.asarray(KerrRayTracer(base_cfg).render().image.convert("RGB"), dtype=np.uint8)
+        spool_img = np.asarray(KerrRayTracer(spool_cfg).render().image.convert("RGB"), dtype=np.uint8)
+
+        self.assertTrue(np.array_equal(base_img, spool_img))
+
+    def test_low_memory_spool_fallback_stays_consistent_when_full_frame_filters_are_enabled(self) -> None:
+        base_cfg = RenderConfig(
+            width=96,
+            height=64,
+            coordinate_system="boyer_lindquist",
+            metric_model="kerr",
+            spin=0.86,
+            observer_radius=30.0,
+            observer_inclination_deg=74.0,
+            disk_outer_radius=10.0,
+            disk_model="physical_nt",
+            disk_radial_profile="nt_page_thorne",
+            adaptive_integrator=False,
+            max_steps=88,
+            step_size=0.24,
+            device="cpu",
+            dtype="float32",
+            show_progress_bar=False,
+            render_tile_rows=24,
+            low_memory_spool=False,
+            postprocess_pipeline="gargantua",
+            gargantua_look_strength=0.65,
+        ).validated()
+        spool_requested_cfg = RenderConfig(
+            **{
+                **base_cfg.__dict__,
+                "low_memory_spool": True,
+            }
+        ).validated()
+
+        base_img = np.asarray(KerrRayTracer(base_cfg).render().image.convert("RGB"), dtype=np.float32)
+        fallback_img = np.asarray(KerrRayTracer(spool_requested_cfg).render().image.convert("RGB"), dtype=np.float32)
+        mae = float(np.mean(np.abs(base_img - fallback_img)))
+        self.assertLess(mae, 0.5)
+
     def test_animation_multithread_smoke(self) -> None:
         cfg = RenderConfig(
             width=96,

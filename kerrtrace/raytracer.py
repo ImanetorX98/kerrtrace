@@ -8,6 +8,7 @@ import math
 import numpy as np
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import time
 from typing import Callable, Sequence
@@ -2506,6 +2507,118 @@ class KerrRayTracer:
         hot_tint = torch.tensor([1.00, 0.92, 0.70], dtype=self.dtype, device=self.device).view(1, 3)
         layer_color = layer_color + 0.20 * inner_hot * hot_tint
         return torch.clamp(layer_color, min=0.0, max=1.5)
+
+    def _hsv_to_rgb(
+        self,
+        h: torch.Tensor,
+        s: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        """Vectorized HSV → RGB. All inputs shape (n,) in [0, 1]. Returns (n, 3)."""
+        h6 = torch.clamp(h, min=0.0, max=1.0 - 1.0e-7) * 6.0
+        i = torch.floor(h6).long() % 6
+        f = h6 - torch.floor(h6)
+        p = v * (1.0 - s)
+        q = v * (1.0 - f * s)
+        tv = v * (1.0 - (1.0 - f) * s)
+        r = torch.where(i == 0, v,  torch.where(i == 1, q,  torch.where(i == 2, p,  torch.where(i == 3, p,  torch.where(i == 4, tv, v)))))
+        g = torch.where(i == 0, tv, torch.where(i == 1, v,  torch.where(i == 2, v,  torch.where(i == 3, q,  torch.where(i == 4, p,  p)))))
+        b = torch.where(i == 0, p,  torch.where(i == 1, p,  torch.where(i == 2, tv, torch.where(i == 3, v,  torch.where(i == 4, v,  q)))))
+        return torch.stack([r, g, b], dim=-1)
+
+    def _disk_segmented_color(
+        self,
+        x: torch.Tensor,
+        phi_disk: torch.Tensor,
+        t_disk: torch.Tensor,
+        omega: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Color each disk ray according to which (ring, sector) cell it belongs to
+        in the Keplerian co-rotating frame, blending neighbouring cells with a
+        Gaussian kernel so boundaries fade smoothly.
+
+        Ring index increases outward; hue rotates continuously around azimuth so
+        the result looks like a color-wheel split into concentric annuli.
+        """
+        cfg = self.config
+        n_rings = max(1, int(cfg.disk_segmented_rings))
+        n_sectors = max(2, int(cfg.disk_segmented_sectors))
+        sigma = max(0.05, float(cfg.disk_segmented_sigma))
+        hue_offset = float(cfg.disk_segmented_hue_offset)
+        pi2 = 2.0 * math.pi
+
+        # Phase in the Keplerian co-rotating frame, wrapped to [0, 2π).
+        # Subtracting disk_layer_global_phase allows the animation system to
+        # advance the apparent rotation via --disk-layer-phase-rate-hz.
+        global_phase = torch.as_tensor(cfg.disk_layer_global_phase, dtype=self.dtype, device=self.device)
+        phase = torch.remainder(phi_disk - omega * t_disk - global_phase, pi2)
+
+        # Floating-point coordinates in (ring, sector) cell space
+        r_float = torch.clamp(x, min=0.0, max=1.0 - 1.0e-7) * float(n_rings)
+        s_float = phase / pi2 * float(n_sectors)
+
+        n_rings_f = float(n_rings)
+        n_sectors_f = float(n_sectors)
+        K = max(1, int(math.ceil(2.5 * sigma)))
+
+        color_acc = torch.zeros((x.shape[0], 3), dtype=self.dtype, device=self.device)
+        weight_acc = torch.zeros(x.shape[0], dtype=self.dtype, device=self.device)
+
+        for dr in range(-K, K + 1):
+            for ds in range(-K, K + 1):
+                # Centre of this neighbour cell
+                ring_j = torch.floor(r_float) + float(dr)
+                sec_j = torch.floor(s_float) + float(ds)
+                ring_center = ring_j + 0.5
+                sec_center = sec_j + 0.5
+
+                # Radial distance
+                d_ring = r_float - ring_center
+
+                # Azimuthal distance (shortest arc, accounting for wrap)
+                d_sec_raw = s_float - sec_center
+                d_sec = d_sec_raw - torch.round(d_sec_raw / n_sectors_f) * n_sectors_f
+
+                w = torch.exp(-0.5 * (d_ring * d_ring + d_sec * d_sec) / (sigma * sigma))
+
+                # Out-of-range rings contribute nothing; sectors wrap
+                w = torch.where((ring_j >= 0.0) & (ring_j < n_rings_f), w, torch.zeros_like(w))
+
+                ring_idx = torch.clamp(ring_j, min=0.0, max=n_rings_f - 1.0)
+                sec_idx = torch.remainder(sec_j, n_sectors_f)
+
+                # Normalised ring coordinate [0 = inner, 1 = outer]
+                ring_norm = ring_idx / max(1.0, n_rings_f - 1.0)
+
+                palette_mode = cfg.disk_segmented_palette_mode
+                if palette_mode == "accretion_warm":
+                    # Hue spans red → orange → golden-yellow (0.0 – 0.13),
+                    # with an optional global offset.  Sectors cycle within
+                    # this warm band; rings modulate temperature (brightness).
+                    sec_norm = sec_idx / n_sectors_f
+                    hue = torch.remainder(
+                        sec_norm * 0.13 + hue_offset, 1.0
+                    )
+                    # Inner rings: bright yellow-orange (high T).
+                    # Outer rings: darker rust-brown (low T).
+                    saturation = torch.clamp(0.90 + 0.08 * ring_norm, min=0.5, max=1.0)
+                    value = torch.clamp(0.88 - 0.38 * ring_norm, min=0.2, max=1.0)
+                else:
+                    # rainbow: full hue wheel, pastel outward
+                    hue = torch.remainder(sec_idx / n_sectors_f + hue_offset, 1.0)
+                    saturation = torch.clamp(0.82 - 0.34 * ring_norm, min=0.1, max=1.0)
+                    value = torch.clamp(0.76 + 0.20 * ring_norm, min=0.1, max=1.0)
+
+                cell_rgb = self._hsv_to_rgb(hue, saturation, value)
+                color_acc = color_acc + w.unsqueeze(-1) * cell_rgb
+                weight_acc = weight_acc + w
+
+        return torch.clamp(
+            color_acc / torch.clamp(weight_acc, min=1.0e-8).unsqueeze(-1),
+            min=0.0,
+            max=1.5,
+        )
 
     def _disk_diffrot_iteration_params(self) -> tuple[float, float, float]:
         """
@@ -5068,6 +5181,15 @@ class KerrRayTracer:
                     )
                     layer_mix = torch.as_tensor(cfg.disk_layer_mix, dtype=self.dtype, device=self.device)
                     color = (1.0 - layer_mix) * color + layer_mix * layered
+                if cfg.disk_segmented_palette:
+                    seg_color = self._disk_segmented_color(
+                        x,
+                        phi_disk=phi_disk,
+                        t_disk=t_disk,
+                        omega=omega,
+                    )
+                    seg_mix = torch.as_tensor(cfg.disk_segmented_mix, dtype=self.dtype, device=self.device)
+                    color = (1.0 - seg_mix) * color + seg_mix * seg_color
                 if cfg.enable_disk_differential_rotation and cfg.disk_diffrot_visual_mode != "layer_phase":
                     phase_vis = torch.remainder(phi_disk - omega * t_disk, 2.0 * self.pi)
                     if cfg.disk_structure_mode == "concentric_annuli":
@@ -5170,6 +5292,72 @@ class KerrRayTracer:
         if pipeline != "gargantua":
             return torch.clamp(rgb, min=0.0, max=1.0)
         return self._postprocess_gargantua(rgb, strength)
+
+    def _postprocess_wormhole_seam(self, img: np.ndarray) -> np.ndarray:
+        """Remove the vertical seam artifact from wormhole renders.
+
+        The seam appears at the critical impact parameter boundary (b = b₀)
+        where rays transition from local to remote background. It is detected
+        automatically as the column with the highest horizontal gradient in the
+        background region (excluding the wormhole shadow area), then smoothed
+        with a horizontal Gaussian blend using a cosine-window mask.
+
+        Parameters controlled by config fields:
+          wormhole_seam_sigma      – Gaussian sigma in pixels (default 30)
+          wormhole_seam_blend_half – half-width of the blend band in pixels (default 60)
+        """
+        h, w = img.shape[:2]
+        arr = img.astype(np.float32)
+
+        sigma = float(self.config.wormhole_seam_sigma)
+        blend_half = int(self.config.wormhole_seam_blend_half)
+
+        # --- Seam detection ---
+        # Use only the peripheral rows (top+bottom quarters) where the background
+        # is most visible and the wormhole shadow does not dominate.
+        row_bands = np.concatenate([
+            arr[:h // 4, :, :],
+            arr[3 * h // 4:, :, :],
+        ], axis=0)
+        horiz_grad = np.mean(np.abs(np.diff(row_bands, axis=1)), axis=(0, 2))
+
+        # Exclude a central exclusion zone around x=w//2 (wormhole shadow rim)
+        excl_half = int(w * 0.14)
+        cx = w // 2
+        lo_excl = max(0, cx - excl_half)
+        hi_excl = min(w - 2, cx + excl_half)
+        horiz_grad[lo_excl:hi_excl] = 0.0
+        # Also exclude the first and last 5% of the image width (edge artifacts)
+        margin = max(1, w // 20)
+        horiz_grad[:margin] = 0.0
+        horiz_grad[-margin:] = 0.0
+
+        seam_col = int(np.argmax(horiz_grad))
+
+        # --- Horizontal Gaussian blur (1D kernel, reflect padding) ---
+        radius = int(4.0 * sigma + 0.5)
+        kx = np.arange(-radius, radius + 1, dtype=np.float64)
+        kernel = np.exp(-0.5 * (kx / sigma) ** 2)
+        kernel = (kernel / kernel.sum()).astype(np.float32)
+
+        padded = np.pad(arr, ((0, 0), (radius, radius), (0, 0)), mode="reflect")
+        blurred = np.zeros_like(arr)
+        for i, k in enumerate(kernel):
+            blurred += k * padded[:, i : i + w, :]
+
+        # --- Cosine-window blend mask (0 at band edges → 1 at seam_col) ---
+        x_lo = max(0, seam_col - blend_half)
+        x_hi = min(w, seam_col + blend_half + 1)
+        xs = np.arange(x_lo, x_hi, dtype=np.float32)
+        alpha = 0.5 * (1.0 - np.cos(np.pi * (xs - x_lo) / max(1.0, x_hi - x_lo - 1)))
+        alpha = alpha[np.newaxis, :, np.newaxis]  # (1, band_w, 1)
+
+        result = arr.copy()
+        result[:, x_lo:x_hi, :] = (
+            (1.0 - alpha) * arr[:, x_lo:x_hi, :]
+            + alpha * blurred[:, x_lo:x_hi, :]
+        )
+        return np.clip(result, 0.0, 255.0).astype(np.uint8)
 
     def _postprocess_gargantua(self, rgb: torch.Tensor, strength: float) -> torch.Tensor:
         s = max(0.0, min(2.0, float(strength)))
@@ -5538,12 +5726,26 @@ class KerrRayTracer:
             return "manual"
         return backend
 
+    def _clear_device_cache(self) -> None:
+        """Best-effort cache cleanup to limit long-run memory growth on GPU backends."""
+        try:
+            if self.device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        try:
+            if self.device.type == "mps" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        except Exception:
+            pass
+
     @torch.inference_mode()
     def render(
         self,
         x_pixel_offset: float = 0.0,
         y_pixel_offset: float = 0.0,
         emitter: EmitterInput = None,
+        row_progress_callback: Callable[[int, int], None] | None = None,
     ) -> RenderOutput:
         emitter_list = self._normalize_emitters(emitter)
         emitter_payload: EmitterInput
@@ -5584,6 +5786,10 @@ class KerrRayTracer:
             # and keep compile/replay overhead predictable.
             target_chunks = 12 if h >= 432 else 8
             tile_rows = max(1, min(h, math.ceil(h / target_chunks)))
+        elif row_progress_callback is not None and h > 1:
+            # Keep row callbacks reasonably frequent for external progress sinks.
+            target_chunks = 12 if h >= 600 else 10
+            tile_rows = max(1, min(h, math.ceil(h / target_chunks)))
         elif self.config.adaptive_spatial_sampling and h > 1:
             # Adaptive per-row scheduling needs multiple row blocks even when the
             # progress bar is disabled.
@@ -5607,6 +5813,16 @@ class KerrRayTracer:
         progress_stop = threading.Event()
         eta_base_seconds: float | None = None
         eta_base_time = progress_start
+
+        def _notify_row_progress(rows_value: int) -> None:
+            if row_progress_callback is None:
+                return
+            try:
+                rows_clamped = max(0, min(h, int(rows_value)))
+                row_progress_callback(rows_clamped, h)
+            except Exception:
+                # Progress callback is best-effort and must never break rendering.
+                pass
 
         def _emit_progress(rows_now: int, eta_now: float | None, finalize_now: bool = False) -> None:
             with progress_print_lock:
@@ -5644,13 +5860,7 @@ class KerrRayTracer:
             _emit_progress(rows_now=0, eta_now=eta_base_seconds, finalize_now=False)
             ticker_thread = threading.Thread(target=_eta_ticker, name="kerrtrace-progress-eta", daemon=True)
             ticker_thread.start()
-
-        hit_disk = torch.zeros(h * w, dtype=torch.bool, device=self.device)
-        hit_emitter = torch.zeros(h * w, dtype=torch.bool, device=self.device)
-        hit_horizon = torch.zeros(h * w, dtype=torch.bool, device=self.device)
-        escaped = torch.zeros(h * w, dtype=torch.bool, device=self.device)
-        rgb = torch.zeros((h, w, 3), dtype=self.dtype, device=self.device)
-        steps_used = 0
+        _notify_row_progress(rows_done)
 
         def _shade_from_trace(trace: tuple[torch.Tensor, ...]) -> torch.Tensor:
             with amp_ctx:
@@ -5662,6 +5872,67 @@ class KerrRayTracer:
             row_blocks = [(rs, min(h, rs + tile_rows)) for rs in range(0, h, tile_rows)]
         else:
             row_blocks = [(0, h)]
+
+        low_memory_requested = bool(cfg_render_base.low_memory_spool)
+        low_memory_reasons: list[str] = []
+        if low_memory_requested:
+            if bool(cfg_render_base.adaptive_spatial_sampling) and len(row_blocks) > 1:
+                low_memory_reasons.append("adaptive_spatial_sampling requires a full-frame preview")
+            if (
+                str(cfg_render_base.postprocess_pipeline) == "gargantua"
+                and float(cfg_render_base.gargantua_look_strength) > 0.0
+            ):
+                low_memory_reasons.append("gargantua postprocess requires full-frame neighborhood filters")
+            if int(self._meridian_destripe_passes()) > 0:
+                low_memory_reasons.append("meridian destripe requires full-frame seam detection")
+            if bool(self.is_wormhole and cfg_render_base.wormhole_seam_remove):
+                low_memory_reasons.append("wormhole seam postprocess requires full-frame analysis")
+            if bool(
+                self.is_wormhole
+                and cfg_render_base.wormhole_mt_beam_supersampling
+                and int(cfg_render_base.wormhole_mt_beam_samples) > 0
+            ):
+                low_memory_reasons.append("wormhole beam supersampling requires full-frame refinement masks")
+            if low_memory_reasons:
+                print(
+                    "Low-memory spool requested but disabled: "
+                    + "; ".join(low_memory_reasons)
+                    + ". Falling back to standard in-memory render.",
+                    flush=True,
+                )
+        use_low_memory_spool = bool(low_memory_requested and (not low_memory_reasons))
+
+        hit_disk: torch.Tensor | None = None
+        hit_emitter: torch.Tensor | None = None
+        hit_horizon: torch.Tensor | None = None
+        escaped: torch.Tensor | None = None
+        rgb: torch.Tensor | None = None
+        steps_used = 0
+
+        spool_rgb_u8: np.memmap | None = None
+        spool_path: Path | None = None
+        disk_hits_count = 0
+        horizon_hits_count = 0
+        escaped_count = 0
+        cache_flush_stride = 4 if self.device.type in {"cuda", "mps"} else 0
+        if use_low_memory_spool:
+            try:
+                with tempfile.NamedTemporaryFile(prefix="kerrtrace_frame_spool_", suffix=".rgb8", delete=False) as tmp:
+                    spool_path = Path(tmp.name)
+                spool_rgb_u8 = np.memmap(spool_path, dtype=np.uint8, mode="w+", shape=(h, w, 3))
+            except Exception as exc:
+                use_low_memory_spool = False
+                if low_memory_requested:
+                    print(
+                        f"Low-memory spool unavailable ({exc}); falling back to standard in-memory render.",
+                        flush=True,
+                    )
+        if not use_low_memory_spool:
+            hit_disk = torch.zeros(h * w, dtype=torch.bool, device=self.device)
+            hit_emitter = torch.zeros(h * w, dtype=torch.bool, device=self.device)
+            hit_horizon = torch.zeros(h * w, dtype=torch.bool, device=self.device)
+            escaped = torch.zeros(h * w, dtype=torch.bool, device=self.device)
+            rgb = torch.zeros((h, w, 3), dtype=self.dtype, device=self.device)
 
         def _trace_and_shade_block(
             row_start: int,
@@ -5814,16 +6085,35 @@ class KerrRayTracer:
                         row_end=row_end,
                         use_meridian=bool(cfg_render_base.meridian_supersample),
                     )
-
-                    rgb[row_start:row_end, :, :] = block_rgb
                     steps_used = max(steps_used, int(local_steps_used))
-
-                    start = row_start * w
-                    end = row_end * w
-                    hit_disk[start:end] = local_hit_disk
-                    hit_emitter[start:end] = local_hit_emitter
-                    hit_horizon[start:end] = local_hit_horizon
-                    escaped[start:end] = local_escaped
+                    if use_low_memory_spool:
+                        assert spool_rgb_u8 is not None
+                        disk_hits_count += int((local_hit_disk | local_hit_emitter).sum().item())
+                        horizon_hits_count += int(local_hit_horizon.sum().item())
+                        escaped_count += int(local_escaped.sum().item())
+                        block_u8 = torch.clamp(
+                            self._apply_postprocess_pipeline(block_rgb) * 255.0,
+                            min=0.0,
+                            max=255.0,
+                        ).to(torch.uint8)
+                        spool_rgb_u8[row_start:row_end, :, :] = (
+                            block_u8.detach().to(device="cpu").contiguous().numpy()
+                        )
+                        if cache_flush_stride > 0 and (
+                            ((block_index + 1) % cache_flush_stride == 0) or (row_end >= h)
+                        ):
+                            self._clear_device_cache()
+                    else:
+                        assert rgb is not None
+                        assert hit_disk is not None and hit_emitter is not None
+                        assert hit_horizon is not None and escaped is not None
+                        rgb[row_start:row_end, :, :] = block_rgb
+                        start = row_start * w
+                        end = row_end * w
+                        hit_disk[start:end] = local_hit_disk
+                        hit_emitter[start:end] = local_hit_emitter
+                        hit_horizon[start:end] = local_hit_horizon
+                        escaped[start:end] = local_escaped
                     rows_done += (row_end - row_start)
                     if progress_bar is not None:
                         progress_bar.update(row_end - row_start)
@@ -5837,12 +6127,43 @@ class KerrRayTracer:
                             eta_now=eta_now,
                             finalize_now=rows_done >= h,
                         )
+                    _notify_row_progress(rows_done)
         finally:
             self.config = cfg_render_base
 
         if ticker_thread is not None:
             progress_stop.set()
             ticker_thread.join(timeout=1.5)
+        _notify_row_progress(h)
+
+        if use_low_memory_spool:
+            self._last_rgb_float = None
+            out: np.ndarray
+            try:
+                assert spool_rgb_u8 is not None
+                spool_rgb_u8.flush()
+                out = np.asarray(spool_rgb_u8, dtype=np.uint8).copy()
+            finally:
+                if spool_rgb_u8 is not None:
+                    del spool_rgb_u8
+                if spool_path is not None:
+                    try:
+                        spool_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            image = Image.fromarray(out, mode="RGB")
+            stats = RenderStats(
+                total_rays=self.config.width * self.config.height,
+                disk_hits=int(disk_hits_count),
+                horizon_hits=int(horizon_hits_count),
+                escaped=int(escaped_count),
+                steps_used=steps_used,
+            )
+            return RenderOutput(image=image, stats=stats)
+
+        assert rgb is not None
+        assert hit_disk is not None and hit_emitter is not None
+        assert hit_horizon is not None and escaped is not None
 
         # ROI supersampling disabled: in realistic KNdS/GKS profiles this mode
         # improved local detail but introduced a substantial render-time penalty.
@@ -5950,6 +6271,8 @@ class KerrRayTracer:
             self._last_rgb_float = None
         out_t = self._finalize_rgb_cuda_graph(rgb)
         out = out_t.cpu().contiguous().numpy()
+        if self.is_wormhole and self.config.wormhole_seam_remove:
+            out = self._postprocess_wormhole_seam(out)
         image = Image.fromarray(out, mode="RGB")
 
         stats = RenderStats(
