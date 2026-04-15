@@ -2593,17 +2593,27 @@ class KerrRayTracer:
 
                 palette_mode = cfg.disk_segmented_palette_mode
                 if palette_mode == "accretion_warm":
-                    # Hue spans red → orange → golden-yellow (0.0 – 0.13),
-                    # with an optional global offset.  Sectors cycle within
-                    # this warm band; rings modulate temperature (brightness).
-                    sec_norm = sec_idx / n_sectors_f
-                    hue = torch.remainder(
-                        sec_norm * 0.13 + hue_offset, 1.0
-                    )
-                    # Inner rings: bright yellow-orange (high T).
-                    # Outer rings: darker rust-brown (low T).
-                    saturation = torch.clamp(0.90 + 0.08 * ring_norm, min=0.5, max=1.0)
-                    value = torch.clamp(0.88 - 0.38 * ring_norm, min=0.2, max=1.0)
+                    # Build deterministic per-cell jitter in warm tones.
+                    # Using both ring+sector avoids long coherent bands where a
+                    # single azimuthal sector dominates the full disk.
+                    cell_id = ring_idx * n_sectors_f + sec_idx
+                    rnd_a = torch.sin(cell_id * 12.9898 + 78.233) * 43758.5453
+                    rnd_b = torch.sin(cell_id * 19.9137 + 11.135) * 24634.6345
+                    rnd_c = torch.sin(cell_id * 7.1231 + 93.531) * 35412.2381
+                    rnd_a = rnd_a - torch.floor(rnd_a)
+                    rnd_b = rnd_b - torch.floor(rnd_b)
+                    rnd_c = rnd_c - torch.floor(rnd_c)
+
+                    # Warm hue span only (red -> orange -> yellow), but sampled
+                    # per-cell instead of sweeping linearly with azimuth.
+                    hue = torch.remainder(hue_offset + 0.13 * rnd_a, 1.0)
+
+                    # Keep a broad thermal trend with radius while adding
+                    # per-cell variance so colors stay patchy and irregular.
+                    sat_base = 0.86 + 0.12 * ring_norm
+                    val_base = 0.84 - 0.34 * ring_norm
+                    saturation = torch.clamp(sat_base + 0.16 * (rnd_b - 0.5), min=0.45, max=1.0)
+                    value = torch.clamp(val_base + 0.30 * (rnd_c - 0.5), min=0.18, max=1.0)
                 else:
                     # rainbow: full hue wheel, pastel outward
                     hue = torch.remainder(sec_idx / n_sectors_f + hue_offset, 1.0)
