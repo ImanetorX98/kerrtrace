@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import replace
 import math
-import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -13,12 +11,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 import torch
 
+from .animation import VIDEO_SUFFIXES, _encode_video_ffmpeg
 from .config import RenderConfig
 from .geometry import event_horizon_radius, inverse_metric_components, inverse_metric_derivatives
 from .raytracer import KerrRayTracer, PointEmitter
-
-
-VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv"}
 
 
 @dataclass
@@ -29,32 +25,6 @@ class ChargedParticleAnimationStats:
     output_path: Path
     particles: int
     survivors: int
-
-
-def _encode_video_ffmpeg(frames_dir: Path, output_path: Path, fps: int) -> None:
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise RuntimeError("ffmpeg not found in PATH")
-
-    input_pattern = str(frames_dir / "frame_%05d.png")
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-framerate",
-        str(fps),
-        "-i",
-        input_pattern,
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-crf",
-        "18",
-        str(output_path),
-    ]
-    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed with code {proc.returncode}: {proc.stderr.strip()}")
 
 
 class ChargedParticleOrbiter:
@@ -571,7 +541,7 @@ class ChargedParticleOrbiter:
 
             suffix = target.suffix.lower()
             if suffix in VIDEO_SUFFIXES:
-                _encode_video_ffmpeg(frame_dir, target, fps)
+                _encode_video_ffmpeg(frame_dir, target, fps, cfg)
             else:
                 raise ValueError("Unsupported output extension for particle animation. Use .mp4, .mov, or .mkv")
 
@@ -722,7 +692,7 @@ class ChargedParticleOrbiter:
 
             suffix = target.suffix.lower()
             if suffix in VIDEO_SUFFIXES:
-                _encode_video_ffmpeg(frame_dir, target, fps)
+                _encode_video_ffmpeg(frame_dir, target, fps, cfg)
             else:
                 raise ValueError("Unsupported output extension for raytraced particle animation. Use .mp4, .mov, or .mkv")
 

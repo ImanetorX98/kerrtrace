@@ -23,5 +23,8 @@ kerrtrace = "kerrtrace.cli:main"
 kerrtrace-ui = "kerrtrace.desktop_launcher:main"
 kerrtrace-starship = "kerrtrace.starship_video:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
 [tool.setuptools.packages.find]
 include = ["kerrtrace*"]

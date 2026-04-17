@@ -5,3 +5,4 @@ click>=8.1
 streamlit>=1.35
 tqdm>=4.66
 imageio>=2.34
+pytest>=7.4
