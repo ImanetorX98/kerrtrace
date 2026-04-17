@@ -114,7 +114,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disk-outer-radius", type=float)
     parser.add_argument("--disable-accretion-disk", action="store_true")
     parser.add_argument("--enable-accretion-disk", action="store_true")
-    parser.add_argument("--disk-model", choices=["legacy", "physical_nt"])
+    parser.add_argument("--disk-model", choices=["legacy", "physical_nt", "riaf"])
     parser.add_argument("--disk-radial-profile", choices=["nt_proxy", "nt_page_thorne"])
     parser.add_argument("--emissivity-index", type=float)
     parser.add_argument("--inner-edge-boost", type=float)
@@ -172,6 +172,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disk-layer-accident-strength", type=float)
     parser.add_argument("--disk-layer-accident-count", type=float)
     parser.add_argument("--disk-layer-accident-sharpness", type=float)
+    parser.add_argument("--riaf-alpha-n", type=float, help="RIAF density power-law index n_e ∝ r^-α (default 1.1)")
+    parser.add_argument("--riaf-alpha-t", type=float, help="RIAF temperature power-law index T_e ∝ r^-α (default 0.84)")
+    parser.add_argument("--riaf-alpha-b", type=float, help="RIAF B-field power-law index B ∝ r^-α (default 1.25)")
+    parser.add_argument("--riaf-t-visual", type=float, help="Visual temperature at ISCO in K for color mapping (default 18000)")
+    parser.add_argument("--riaf-color-mode", choices=["blackbody", "plasma", "interstellar_warm", "gargantua"], help="Color mapping mode for RIAF model (default: blackbody)")
     parser.add_argument("--enable-disk-segmented-palette", action="store_true", help="Enable segmented color-wheel disk palette")
     parser.add_argument("--disable-disk-segmented-palette", action="store_true")
     parser.add_argument("--disk-segmented-rings", type=int, help="Number of concentric rings (default 3)")
@@ -569,6 +574,11 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         "disk_layer_accident_strength": args.disk_layer_accident_strength,
         "disk_layer_accident_count": args.disk_layer_accident_count,
         "disk_layer_accident_sharpness": args.disk_layer_accident_sharpness,
+        "riaf_alpha_n": args.riaf_alpha_n,
+        "riaf_alpha_T": args.riaf_alpha_t,
+        "riaf_alpha_B": args.riaf_alpha_b,
+        "riaf_T_visual": args.riaf_t_visual,
+        "riaf_color_mode": args.riaf_color_mode,
         "disk_segmented_rings": args.disk_segmented_rings,
         "disk_segmented_sectors": args.disk_segmented_sectors,
         "disk_segmented_sigma": args.disk_segmented_sigma,
@@ -711,7 +721,7 @@ def _merge_cli_config(base: RenderConfig, args: argparse.Namespace) -> RenderCon
         updates["physical_disk_model"] = False
         updates["disk_model"] = "legacy"
     if args.disk_model is not None:
-        updates["physical_disk_model"] = args.disk_model == "physical_nt"
+        updates["physical_disk_model"] = args.disk_model in {"physical_nt", "riaf"}
     if args.thick_disk:
         updates["thick_disk"] = True
     if args.thin_disk:
@@ -954,6 +964,9 @@ def main() -> int:
         args.animate = True
         print("Auto mode: video output detected, enabling animation render.")
 
+    if args.progress_window and args.no_progress_window:
+        raise ValueError("Cannot combine --progress-window with --no-progress-window")
+
     if args.diagnose_device:
         _print_device_diagnostics(config)
         return 0
@@ -977,8 +990,6 @@ def main() -> int:
             raise ValueError("--encode-frames-only requires --frames-dir")
         if args.encode_frames_only and args.render_frames_only:
             raise ValueError("Cannot combine --encode-frames-only with --render-frames-only")
-        if args.progress_window and args.no_progress_window:
-            raise ValueError("Cannot combine --progress-window with --no-progress-window")
         stream_encode = True
         if args.disable_stream_encode:
             stream_encode = False
@@ -1097,9 +1108,66 @@ def main() -> int:
         )
         return 0
 
+    progress_ui = None
+    progress_ui_error: str | None = None
+    row_progress_callback = None
+    if args.progress_window:
+        try:
+            from .progress_window import RenderProgressWindow
+
+            progress_ui = RenderProgressWindow(title=f"KerrTrace Render - {Path(config.output).name}")
+            if not progress_ui.available:
+                progress_ui_error = progress_ui.init_error
+                progress_ui = None
+        except Exception as exc:
+            progress_ui_error = f"{type(exc).__name__}: {exc}"
+            progress_ui = None
+
+        if progress_ui is None:
+            if progress_ui_error:
+                print(
+                    "Progress window unavailable in this environment; "
+                    f"continuing with terminal progress only. Reason: {progress_ui_error}"
+                )
+            else:
+                print("Progress window unavailable in this environment; continuing with terminal progress only.")
+        else:
+            progress_ui.update(
+                current_frame=1,
+                completed_frames=0,
+                total_frames=1,
+                frame_units_done=0,
+                frame_units_total=max(1, int(config.height)),
+            )
+
+            def _row_progress(done_rows: int, total_rows: int) -> None:
+                progress_ui.update(
+                    current_frame=1,
+                    completed_frames=0,
+                    total_frames=1,
+                    frame_units_done=int(done_rows),
+                    frame_units_total=max(1, int(total_rows)),
+                )
+
+            row_progress_callback = _row_progress
+
     tracer = KerrRayTracer(config)
     t0 = time.perf_counter()
-    stats = tracer.render_to_file(config.output)
+    try:
+        stats = tracer.render_to_file(config.output, row_progress_callback=row_progress_callback)
+    finally:
+        if progress_ui is not None:
+            try:
+                progress_ui.update(
+                    current_frame=1,
+                    completed_frames=1,
+                    total_frames=1,
+                    frame_units_done=max(1, int(config.height)),
+                    frame_units_total=max(1, int(config.height)),
+                )
+            except Exception:
+                pass
+            progress_ui.close()
     dt = time.perf_counter() - t0
 
     print(f"Saved image: {config.output}")

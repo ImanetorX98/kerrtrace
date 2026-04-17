@@ -8,6 +8,7 @@ class RenderProgressWindow:
 
     def __init__(self, title: str = "KerrTrace Render Progress") -> None:
         self._available = False
+        self._init_error: str | None = None
         self._last_emit = 0.0
         self._min_emit_interval = 0.12
         self._tk = None
@@ -58,12 +59,17 @@ class RenderProgressWindow:
             self._root = root
             self._available = True
             self._pump_ui()
-        except Exception:
+        except Exception as exc:
+            self._init_error = f"{type(exc).__name__}: {exc}"
             self._available = False
 
     @property
     def available(self) -> bool:
         return self._available
+
+    @property
+    def init_error(self) -> str | None:
+        return self._init_error
 
     def update(
         self,

@@ -2341,6 +2341,41 @@ class KerrRayTracer:
         color = torch.where(m3.unsqueeze(-1), c34, color)
         return color
 
+    def _gargantua_palette(self, t: torch.Tensor) -> torch.Tensor:
+        """Palette extracted from Interstellar (2014) Gargantua accretion disk.
+        t=0 → inner edge (near-white cream), t=1 → outer disk (dark chocolate brown).
+        Stops: #FFF8E6 → #FFDC78 → #E6963C → #A05A1E → #5A2D0F
+        """
+        t = torch.clamp(t, min=0.0, max=1.0)
+        c0 = torch.tensor([1.00, 0.97, 0.90], dtype=self.dtype, device=self.device)  # near-white cream
+        c1 = torch.tensor([1.00, 0.86, 0.47], dtype=self.dtype, device=self.device)  # warm yellow
+        c2 = torch.tensor([0.90, 0.59, 0.24], dtype=self.dtype, device=self.device)  # deep orange
+        c3 = torch.tensor([0.63, 0.35, 0.12], dtype=self.dtype, device=self.device)  # amber-brown
+        c4 = torch.tensor([0.35, 0.18, 0.06], dtype=self.dtype, device=self.device)  # dark chocolate brown
+
+        color = torch.zeros((t.shape[0], 3), dtype=self.dtype, device=self.device)
+
+        m0 = t < 0.20
+        s0 = torch.clamp(t / 0.20, min=0.0, max=1.0).unsqueeze(-1)
+        c01 = c0 + (c1 - c0) * s0
+        color = torch.where(m0.unsqueeze(-1), c01, color)
+
+        m1 = (t >= 0.20) & (t < 0.46)
+        s1 = torch.clamp((t - 0.20) / 0.26, min=0.0, max=1.0).unsqueeze(-1)
+        c12 = c1 + (c2 - c1) * s1
+        color = torch.where(m1.unsqueeze(-1), c12, color)
+
+        m2 = (t >= 0.46) & (t < 0.74)
+        s2 = torch.clamp((t - 0.46) / 0.28, min=0.0, max=1.0).unsqueeze(-1)
+        c23 = c2 + (c3 - c2) * s2
+        color = torch.where(m2.unsqueeze(-1), c23, color)
+
+        m3 = t >= 0.74
+        s3 = torch.clamp((t - 0.74) / 0.26, min=0.0, max=1.0).unsqueeze(-1)
+        c34 = c3 + (c4 - c3) * s3
+        color = torch.where(m3.unsqueeze(-1), c34, color)
+        return torch.clamp(color, min=0.0, max=1.2)
+
     def _interstellar_warm_palette(self, t: torch.Tensor) -> torch.Tensor:
         t = torch.clamp(t, min=0.0, max=1.0)
         c0 = torch.tensor([1.00, 0.95, 0.82], dtype=self.dtype, device=self.device)
@@ -2604,21 +2639,41 @@ class KerrRayTracer:
                     rnd_b = rnd_b - torch.floor(rnd_b)
                     rnd_c = rnd_c - torch.floor(rnd_c)
 
-                    # Warm hue span only (red -> orange -> yellow), but sampled
-                    # per-cell instead of sweeping linearly with azimuth.
-                    hue = torch.remainder(hue_offset + 0.13 * rnd_a, 1.0)
+                    # Natural warm hues only: brown -> red -> yellow (no green/cyan).
+                    hue = torch.remainder(hue_offset + 0.01 + 0.13 * rnd_a, 1.0)
 
-                    # Keep a broad thermal trend with radius while adding
-                    # per-cell variance so colors stay patchy and irregular.
-                    sat_base = 0.86 + 0.12 * ring_norm
-                    val_base = 0.84 - 0.34 * ring_norm
-                    saturation = torch.clamp(sat_base + 0.16 * (rnd_b - 0.5), min=0.45, max=1.0)
-                    value = torch.clamp(val_base + 0.30 * (rnd_c - 0.5), min=0.18, max=1.0)
+                    # Hot inner clumps can desaturate toward white while staying bright.
+                    hotspot = torch.clamp((rnd_c - 0.70) * 2.8, min=0.0, max=1.0) * torch.clamp(
+                        1.25 - ring_norm, min=0.0, max=1.0
+                    )
+
+                    # Broad thermal trend + random patch variance.
+                    sat_base = 0.90 + 0.08 * ring_norm
+                    val_base = 0.82 - 0.30 * ring_norm
+                    saturation = torch.clamp(
+                        sat_base + 0.22 * (rnd_b - 0.5) - 0.65 * hotspot,
+                        min=0.08,
+                        max=1.0,
+                    )
+                    value = torch.clamp(
+                        val_base + 0.28 * (rnd_c - 0.5) + 0.55 * hotspot,
+                        min=0.18,
+                        max=1.0,
+                    )
                 else:
-                    # rainbow: full hue wheel, pastel outward
-                    hue = torch.remainder(sec_idx / n_sectors_f + hue_offset, 1.0)
-                    saturation = torch.clamp(0.82 - 0.34 * ring_norm, min=0.1, max=1.0)
-                    value = torch.clamp(0.76 + 0.20 * ring_norm, min=0.1, max=1.0)
+                    # Rainbow mode: use per-cell jitter so colors are distributed
+                    # as irregular patches instead of coherent azimuthal bands.
+                    cell_id = ring_idx * n_sectors_f + sec_idx
+                    rnd_a = torch.sin(cell_id * 5.3983 + 91.123) * 18437.2481
+                    rnd_b = torch.sin(cell_id * 17.237 + 47.991) * 29341.7712
+                    rnd_c = torch.sin(cell_id * 29.711 + 13.501) * 12784.9873
+                    rnd_a = rnd_a - torch.floor(rnd_a)
+                    rnd_b = rnd_b - torch.floor(rnd_b)
+                    rnd_c = rnd_c - torch.floor(rnd_c)
+
+                    hue = torch.remainder(hue_offset + rnd_a + 0.18 * ring_norm, 1.0)
+                    saturation = torch.clamp(0.70 + 0.28 * (rnd_b - 0.5), min=0.22, max=1.0)
+                    value = torch.clamp(0.68 + 0.44 * (rnd_c - 0.5), min=0.18, max=1.0)
 
                 cell_rgb = self._hsv_to_rgb(hue, saturation, value)
                 color_acc = color_acc + w.unsqueeze(-1) * cell_rgb
@@ -2741,6 +2796,70 @@ class KerrRayTracer:
         relativistic = torch.sqrt(torch.clamp(C / torch.clamp(A, min=1.0e-6), min=0.02, max=50.0))
         flux = zero_torque * relativistic / torch.clamp(r3 * torch.clamp(B, min=0.02), min=1.0e-8)
         return torch.clamp(flux, min=0.0)
+
+    def _riaf_thin_emission(
+        self,
+        r_profile: torch.Tensor,
+        rin: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Semi-analytical RIAF thin-disk emission (Broderick & Loeb 2006 / Yuan et al. 2003).
+
+        Evaluates the synchrotron-proxy emissivity and visual color at each equatorial
+        crossing radius without volumetric integration (disk remains geometrically thin).
+
+        Profiles:
+          n_e(r) ∝ (r/r_in)^(-alpha_n)
+          T_e(r) ∝ (r/r_in)^(-alpha_T)   [visually rescaled to riaf_T_visual at r_in]
+          B(r)   ∝ (r/r_in)^(-alpha_B)
+          j(r)   ∝ n_e · Θ_e² · B²  ×  zero_torque_factor
+
+        Returns (intensity_norm, color_rgb) both shape (N,) and (N,3).
+        """
+        cfg = self.config
+        rin_t = torch.as_tensor(max(rin, 1.0e-6), dtype=self.dtype, device=self.device)
+        r_norm = torch.clamp(r_profile / rin_t, min=1.0)
+
+        alpha_n = float(cfg.riaf_alpha_n)
+        alpha_T = float(cfg.riaf_alpha_T)
+        alpha_B = float(cfg.riaf_alpha_B)
+
+        # Combined synchrotron emissivity power-law: j ∝ r^-(alpha_n + 2*alpha_T + 2*alpha_B)
+        alpha_j = alpha_n + 2.0 * alpha_T + 2.0 * alpha_B
+
+        # Zero-torque inner boundary (matches NT physics)
+        zero_torque = torch.clamp(1.0 - torch.rsqrt(torch.clamp(r_norm, min=1.0001)), min=0.0)
+
+        j_profile = torch.pow(r_norm, -alpha_j) * zero_torque
+
+        # Normalize at the analytic peak: r_peak = ((alpha_j + 0.5) / alpha_j)^2
+        r_peak = ((alpha_j + 0.5) / alpha_j) ** 2
+        j_ref = max(r_peak ** (-alpha_j) * (1.0 - r_peak ** (-0.5)), 1.0e-12)
+        intensity = j_profile / j_ref
+
+        # Visual temperature: T_e(r) = riaf_T_visual * (r/r_in)^(-alpha_T)
+        T_visual_inner = float(cfg.riaf_T_visual)
+        T_visual = T_visual_inner * torch.pow(r_norm, -alpha_T)
+
+        color_mode = cfg.riaf_color_mode
+        if color_mode == "plasma":
+            r_out = float(cfg.disk_outer_radius)
+            r_norm_outer = max(r_out / max(rin, 1.0e-6), 1.0)
+            T_outer = T_visual_inner * (r_norm_outer ** (-alpha_T))
+            denom = max(T_visual_inner - T_outer, 1.0)
+            heat = torch.clamp((T_visual - T_outer) / denom, min=0.0, max=1.0)
+            color = self._plasma_palette(heat)
+        elif color_mode == "interstellar_warm":
+            span = float(cfg.disk_outer_radius) - rin
+            x_pos = torch.clamp((r_profile - rin_t) / max(span, 1.0e-6), min=0.0, max=1.0)
+            color = self._interstellar_warm_palette(x_pos)
+        elif color_mode == "gargantua":
+            span = float(cfg.disk_outer_radius) - rin
+            x_pos = torch.clamp((r_profile - rin_t) / max(span, 1.0e-6), min=0.0, max=1.0)
+            color = self._gargantua_palette(x_pos)
+        else:  # "blackbody"
+            color = self._blackbody_rgb(T_visual)
+
+        return intensity, color
 
     def _finite_diff_1d(self, y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         dy = torch.zeros_like(y)
@@ -5138,7 +5257,35 @@ class KerrRayTracer:
             volume_factor = self._disk_volume_emission_factor(r_profile, p_theta_disk)
 
             disk_model = cfg.disk_model if cfg.physical_disk_model else "legacy"
-            if disk_model == "physical_nt":
+            if disk_model == "riaf":
+                rin_f = float(cfg.disk_inner_radius)
+                intensity_riaf, color = self._riaf_thin_emission(r_profile, rin_f)
+                edge_weight = 0.22 + body + cfg.inner_edge_boost * inner_rim + cfg.outer_edge_boost * outer_rim
+                intensity = torch.clamp(intensity_riaf * edge_weight * relativistic_gain, min=0.0, max=40.0)
+                intensity = intensity * vertical_gain
+                intensity = intensity * order_gain
+                intensity = intensity * volume_factor
+                if cfg.disk_layered_palette:
+                    layered = self._disk_layered_palette_color(
+                        x,
+                        phi_disk=phi_disk,
+                        t_disk=t_disk,
+                        layer_complexity=layer_complexity,
+                        omega_layer=omega,
+                    )
+                    layer_mix = torch.as_tensor(cfg.disk_layer_mix, dtype=self.dtype, device=self.device)
+                    color = (1.0 - layer_mix) * color + layer_mix * layered
+                if cfg.disk_segmented_palette:
+                    seg_color = self._disk_segmented_color(
+                        x,
+                        phi_disk=phi_disk,
+                        t_disk=t_disk,
+                        omega=omega,
+                    )
+                    seg_mix = torch.as_tensor(cfg.disk_segmented_mix, dtype=self.dtype, device=self.device)
+                    color = (1.0 - seg_mix) * color + seg_mix * seg_color
+                disk_rgb = color * (intensity.unsqueeze(-1))
+            elif disk_model == "physical_nt":
                 rin = torch.as_tensor(cfg.disk_inner_radius, dtype=self.dtype, device=self.device)
                 if self._disk_flux_lut_main is not None:
                     rr_lut, flux_lut = self._disk_flux_lut_main
@@ -6294,10 +6441,15 @@ class KerrRayTracer:
         )
         return RenderOutput(image=image, stats=stats)
 
-    def render_to_file(self, output_path: str | Path | None = None, emitter: EmitterInput = None) -> RenderStats:
+    def render_to_file(
+        self,
+        output_path: str | Path | None = None,
+        emitter: EmitterInput = None,
+        row_progress_callback: Callable[[int, int], None] | None = None,
+    ) -> RenderStats:
         target = Path(output_path or self.config.output)
         target.parent.mkdir(parents=True, exist_ok=True)
-        result = self.render(emitter=emitter)
+        result = self.render(emitter=emitter, row_progress_callback=row_progress_callback)
         suffix = target.suffix.lower()
         if suffix in {".hdr", ".exr"}:
             if self._last_rgb_float is None:

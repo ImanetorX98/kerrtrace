@@ -650,7 +650,7 @@ def _render_frames(
             f"Frame {index + 1}/{frames}: {frame_label} | frame {frame_dt:.2f}s"
             f"{retry_txt} | ETA ~{_format_eta(eta_seconds)}"
         )
-        _emit_frame_progress(index + 1, completed_frames, frame_units_total_guess, frame_units_total_guess)
+        _emit_frame_progress(index + 1, completed_frames - 1, frame_units_total_guess, frame_units_total_guess)
 
     _emit_frame_progress(0, frames, 1, 1)
 
@@ -899,6 +899,7 @@ def render_animation(
     stream_writer: threading.Thread | None = None
     stream_errors: list[Exception] = []
     progress_ui = None
+    progress_ui_error: str | None = None
 
     progress_window_enabled = bool(progress_window) if progress_window is not None else bool(render_frames and sys.stdout.isatty())
     if progress_window_enabled and render_frames:
@@ -907,11 +908,19 @@ def render_animation(
 
             progress_ui = RenderProgressWindow(title=f"KerrTrace Render - {target.name}")
             if not progress_ui.available:
+                progress_ui_error = progress_ui.init_error
                 progress_ui = None
-        except Exception:
+        except Exception as exc:
+            progress_ui_error = f"{type(exc).__name__}: {exc}"
             progress_ui = None
         if progress_ui is None and progress_window:
-            print("Progress window unavailable in this environment; continuing with terminal progress only.")
+            if progress_ui_error:
+                print(
+                    "Progress window unavailable in this environment; "
+                    f"continuing with terminal progress only. Reason: {progress_ui_error}"
+                )
+            else:
+                print("Progress window unavailable in this environment; continuing with terminal progress only.")
 
     def _progress_sink(
         current_frame_one_based: int,

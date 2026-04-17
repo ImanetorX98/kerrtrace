@@ -68,7 +68,8 @@ CHOICE_FIELDS: dict[str, list[str]] = {
         "kerr_newman_de_sitter",
         "morris_thorne",
     ],
-    "disk_model": ["physical_nt", "legacy"],
+    "disk_model": ["physical_nt", "legacy", "riaf"],
+    "riaf_color_mode": ["blackbody", "plasma", "interstellar_warm", "gargantua"],
     "disk_radial_profile": ["nt_proxy", "nt_page_thorne"],
     "disk_palette": ["default", "interstellar_warm"],
     "disk_diffrot_model": ["keplerian_lut", "keplerian_metric"],
@@ -153,6 +154,11 @@ WEBUI_BASE_DEFAULTS: dict[str, Any] = {
     "observer_azimuth_deg": 0.0,
     "observer_roll_deg": 0.0,
     "disk_model": "physical_nt",
+    "riaf_alpha_n": 1.1,
+    "riaf_alpha_T": 0.84,
+    "riaf_alpha_B": 1.25,
+    "riaf_T_visual": 18000.0,
+    "riaf_color_mode": "blackbody",
     "disk_radial_profile": "nt_page_thorne",
     "disk_inner_radius": None,
     "disk_outer_radius": 12.0,
@@ -3363,6 +3369,46 @@ div[data-testid="stNumberInput"] button svg {
     with row6_col3:
         disk_outer_radius = st.number_input(tfield(lang, "Disk outer radius"), value=float(cfg_seed["disk_outer_radius"]), step=0.5)
 
+    # RIAF model parameters — shown only when disk_model == "riaf"
+    riaf_alpha_n = float(cfg_seed.get("riaf_alpha_n", 1.1))
+    riaf_alpha_T = float(cfg_seed.get("riaf_alpha_T", 0.84))
+    riaf_alpha_B = float(cfg_seed.get("riaf_alpha_B", 1.25))
+    riaf_T_visual = float(cfg_seed.get("riaf_T_visual", 18000.0))
+    riaf_color_mode = str(cfg_seed.get("riaf_color_mode", "blackbody"))
+    if disk_model == "riaf":
+        with st.expander(tr(lang, "riaf_options", "Parametri RIAF"), expanded=True):
+            rc1, rc2, rc3 = st.columns(3)
+            with rc1:
+                riaf_alpha_n = st.number_input(
+                    tr(lang, "riaf_alpha_n", "α densità (n_e ∝ r^-α)"),
+                    min_value=0.1, max_value=4.0,
+                    value=riaf_alpha_n, step=0.05, format="%.2f",
+                )
+                riaf_T_visual = st.number_input(
+                    tr(lang, "riaf_T_visual", "T visivo a ISCO (K)"),
+                    min_value=1000.0, max_value=100000.0,
+                    value=riaf_T_visual, step=500.0, format="%.0f",
+                )
+            with rc2:
+                riaf_alpha_T = st.number_input(
+                    tr(lang, "riaf_alpha_T", "α temperatura (T_e ∝ r^-α)"),
+                    min_value=0.1, max_value=4.0,
+                    value=riaf_alpha_T, step=0.05, format="%.2f",
+                )
+                riaf_color_mode = st.selectbox(
+                    tr(lang, "riaf_color_mode", "Modalità colore RIAF"),
+                    options=CHOICE_FIELDS["riaf_color_mode"],
+                    index=CHOICE_FIELDS["riaf_color_mode"].index(
+                        _safe_choice(CHOICE_FIELDS["riaf_color_mode"], riaf_color_mode)
+                    ),
+                )
+            with rc3:
+                riaf_alpha_B = st.number_input(
+                    tr(lang, "riaf_alpha_B", "α campo B (B ∝ r^-α)"),
+                    min_value=0.1, max_value=4.0,
+                    value=riaf_alpha_B, step=0.05, format="%.2f",
+                )
+
     if metric_model == "morris_thorne":
         st.caption(tr(lang, "morris_thorne_areolar_only", "Per Morris-Thorne è disponibile solo la coordinata in variabile areolare."))
 
@@ -4354,6 +4400,11 @@ div[data-testid="stNumberInput"] button svg {
             "observer_azimuth_deg": float(observer_azimuth_deg),
             "observer_roll_deg": float(observer_roll_deg),
             "disk_model": disk_model,
+            "riaf_alpha_n": riaf_alpha_n,
+            "riaf_alpha_T": riaf_alpha_T,
+            "riaf_alpha_B": riaf_alpha_B,
+            "riaf_T_visual": riaf_T_visual,
+            "riaf_color_mode": riaf_color_mode,
             "disk_radial_profile": disk_radial_profile,
             "disk_outer_radius": float(disk_outer_radius),
             "disk_inner_radius": disk_inner_radius,

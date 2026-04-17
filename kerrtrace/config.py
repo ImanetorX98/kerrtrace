@@ -123,6 +123,12 @@ class RenderConfig:
     disk_segmented_mix: float = 1.0
     disk_segmented_hue_offset: float = 0.0
     disk_segmented_palette_mode: str = "rainbow"
+    # RIAF thin disk model (Broderick & Loeb 2006 / Yuan et al. 2003)
+    riaf_alpha_n: float = 1.1
+    riaf_alpha_T: float = 0.84
+    riaf_alpha_B: float = 1.25
+    riaf_T_visual: float = 18000.0
+    riaf_color_mode: str = "blackbody"
     thick_disk: bool = False
     disk_thickness_ratio: float = 0.12
     disk_thickness_power: float = 0.0
@@ -449,8 +455,8 @@ class RenderConfig:
             raise ValueError("star_seed must be >= 0")
         if cfg.disk_temperature_inner <= 1000.0:
             raise ValueError("disk_temperature_inner must be > 1000 K")
-        if cfg.disk_model not in {"legacy", "physical_nt"}:
-            raise ValueError("disk_model must be 'legacy' or 'physical_nt'")
+        if cfg.disk_model not in {"legacy", "physical_nt", "riaf"}:
+            raise ValueError("disk_model must be 'legacy', 'physical_nt', or 'riaf'")
         if cfg.disk_radial_profile not in {"nt_proxy", "nt_page_thorne"}:
             raise ValueError("disk_radial_profile must be 'nt_proxy' or 'nt_page_thorne'")
         if cfg.disk_structure_mode not in {"continuous", "concentric_annuli"}:
@@ -459,16 +465,26 @@ class RenderConfig:
             raise ValueError("disk_annuli_count must be in [4, 4096]")
         if cfg.disk_annuli_blend < 0.0 or cfg.disk_annuli_blend > 1.0:
             raise ValueError("disk_annuli_blend must be in [0, 1]")
-        if cfg.disk_segmented_rings < 1 or cfg.disk_segmented_rings > 64:
-            raise ValueError("disk_segmented_rings must be in [1, 64]")
-        if cfg.disk_segmented_sectors < 2 or cfg.disk_segmented_sectors > 256:
-            raise ValueError("disk_segmented_sectors must be in [2, 256]")
+        if cfg.disk_segmented_rings < 1 or cfg.disk_segmented_rings > 256:
+            raise ValueError("disk_segmented_rings must be in [1, 256]")
+        if cfg.disk_segmented_sectors < 2 or cfg.disk_segmented_sectors > 1024:
+            raise ValueError("disk_segmented_sectors must be in [2, 1024]")
         if cfg.disk_segmented_sigma <= 0.0 or cfg.disk_segmented_sigma > 4.0:
             raise ValueError("disk_segmented_sigma must be in (0, 4]")
         if cfg.disk_segmented_mix < 0.0 or cfg.disk_segmented_mix > 1.0:
             raise ValueError("disk_segmented_mix must be in [0, 1]")
         if cfg.disk_segmented_palette_mode not in {"rainbow", "accretion_warm"}:
             raise ValueError("disk_segmented_palette_mode must be 'rainbow' or 'accretion_warm'")
+        if cfg.riaf_alpha_n <= 0.0 or cfg.riaf_alpha_n > 4.0:
+            raise ValueError("riaf_alpha_n must be in (0, 4]")
+        if cfg.riaf_alpha_T <= 0.0 or cfg.riaf_alpha_T > 4.0:
+            raise ValueError("riaf_alpha_T must be in (0, 4]")
+        if cfg.riaf_alpha_B <= 0.0 or cfg.riaf_alpha_B > 4.0:
+            raise ValueError("riaf_alpha_B must be in (0, 4]")
+        if cfg.riaf_T_visual < 1000.0 or cfg.riaf_T_visual > 100000.0:
+            raise ValueError("riaf_T_visual must be in [1000, 100000] K")
+        if cfg.riaf_color_mode not in {"blackbody", "plasma", "interstellar_warm", "gargantua"}:
+            raise ValueError("riaf_color_mode must be 'blackbody', 'plasma', 'interstellar_warm', or 'gargantua'")
         if cfg.disk_emission_gain < 0.1 or cfg.disk_emission_gain > 1000.0:
             raise ValueError("disk_emission_gain must be in [0.1, 1000.0]")
         if cfg.disk_color_correction < 1.0 or cfg.disk_color_correction > 4.0:
