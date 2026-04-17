@@ -76,6 +76,32 @@ def _write_radiance_hdr(path: Path, rgb: np.ndarray) -> None:
 
 
 @dataclass
+class TraceFrame:
+    """Named standard format output from _trace(): integrated ray state."""
+
+    hit_disk: torch.Tensor
+    hit_emitter: torch.Tensor
+    hit_horizon: torch.Tensor
+    escaped: torch.Tensor
+    r_emit: torch.Tensor
+    p_t_emit: torch.Tensor
+    p_phi_emit: torch.Tensor
+    p_theta_emit: torch.Tensor
+    disk_vertical_weight: torch.Tensor
+    disk_hit_order: torch.Tensor
+    t_emit: torch.Tensor
+    phi_emit: torch.Tensor
+    p_t_particle: torch.Tensor
+    p_r_particle: torch.Tensor
+    p_theta_particle: torch.Tensor
+    p_phi_particle: torch.Tensor
+    sky_theta: torch.Tensor
+    sky_phi: torch.Tensor
+    sky_side: torch.Tensor
+    steps_used: int
+
+
+@dataclass
 class RenderStats:
     total_rays: int
     disk_hits: int
@@ -4231,27 +4257,27 @@ class KerrRayTracer:
                 escaped[captured] = False
 
         sky_theta, sky_phi, sky_side = self._sky_angles_from_state(state, r_min=r_min)
-        return (
-            hit_disk,
-            hit_emitter,
-            hit_horizon,
-            escaped,
-            r_emit,
-            p_t_emit,
-            p_phi_emit,
-            p_theta_emit,
-            disk_vertical_weight,
-            disk_hit_order,
-            t_emit,
-            phi_emit,
-            p_t_particle,
-            p_r_particle,
-            p_theta_particle,
-            p_phi_particle,
-            sky_theta,
-            sky_phi,
-            sky_side,
-            steps_used,
+        return TraceFrame(
+            hit_disk=hit_disk,
+            hit_emitter=hit_emitter,
+            hit_horizon=hit_horizon,
+            escaped=escaped,
+            r_emit=r_emit,
+            p_t_emit=p_t_emit,
+            p_phi_emit=p_phi_emit,
+            p_theta_emit=p_theta_emit,
+            disk_vertical_weight=disk_vertical_weight,
+            disk_hit_order=disk_hit_order,
+            t_emit=t_emit,
+            phi_emit=phi_emit,
+            p_t_particle=p_t_particle,
+            p_r_particle=p_r_particle,
+            p_theta_particle=p_theta_particle,
+            p_phi_particle=p_phi_particle,
+            sky_theta=sky_theta,
+            sky_phi=sky_phi,
+            sky_side=sky_side,
+            steps_used=steps_used,
         )
 
     def _trace_kerr_schild(
@@ -6019,9 +6045,57 @@ class KerrRayTracer:
             ticker_thread.start()
         _notify_row_progress(rows_done)
 
-        def _shade_from_trace(trace: tuple[torch.Tensor, ...]) -> torch.Tensor:
+        def _as_trace_frame(trace: "TraceFrame | tuple") -> TraceFrame:
+            if isinstance(trace, TraceFrame):
+                return trace
+            return TraceFrame(
+                hit_disk=trace[0],
+                hit_emitter=trace[1],
+                hit_horizon=trace[2],
+                escaped=trace[3],
+                r_emit=trace[4],
+                p_t_emit=trace[5],
+                p_phi_emit=trace[6],
+                p_theta_emit=trace[7],
+                disk_vertical_weight=trace[8],
+                disk_hit_order=trace[9],
+                t_emit=trace[10],
+                phi_emit=trace[11],
+                p_t_particle=trace[12],
+                p_r_particle=trace[13],
+                p_theta_particle=trace[14],
+                p_phi_particle=trace[15],
+                sky_theta=trace[16],
+                sky_phi=trace[17],
+                sky_side=trace[18],
+                steps_used=int(trace[19]),
+            )
+
+        def _shade_from_trace(trace: "TraceFrame | tuple") -> torch.Tensor:
+            frame = _as_trace_frame(trace)
             with amp_ctx:
-                return self._shade(*trace[:-1], emitter=emitter_payload)
+                return self._shade(
+                    frame.hit_disk,
+                    frame.hit_emitter,
+                    frame.hit_horizon,
+                    frame.escaped,
+                    frame.r_emit,
+                    frame.p_t_emit,
+                    frame.p_phi_emit,
+                    frame.p_theta_emit,
+                    frame.disk_vertical_weight,
+                    frame.disk_hit_order,
+                    frame.t_emit,
+                    frame.phi_emit,
+                    frame.p_t_particle,
+                    frame.p_r_particle,
+                    frame.p_theta_particle,
+                    frame.p_phi_particle,
+                    frame.sky_theta,
+                    frame.sky_phi,
+                    frame.sky_side,
+                    emitter=emitter_payload,
+                )
 
         cfg_render_base = self.config
         row_blocks: list[tuple[int, int]]
@@ -6114,15 +6188,17 @@ class KerrRayTracer:
                     row_start=row_start,
                     row_end=row_end,
                 )
-                rgb_a = _shade_from_trace(trace_a).reshape(rows, w, 3)
-                rgb_b = _shade_from_trace(trace_b).reshape(rows, w, 3)
+                fa = _as_trace_frame(trace_a)
+                fb = _as_trace_frame(trace_b)
+                rgb_a = _shade_from_trace(fa).reshape(rows, w, 3)
+                rgb_b = _shade_from_trace(fb).reshape(rows, w, 3)
                 return (
                     0.5 * (rgb_a + rgb_b),
-                    trace_a[0],
-                    trace_a[1],
-                    trace_a[2],
-                    trace_a[3],
-                    int(max(trace_a[-1], trace_b[-1])),
+                    fa.hit_disk,
+                    fa.hit_emitter,
+                    fa.hit_horizon,
+                    fa.escaped,
+                    int(max(fa.steps_used, fb.steps_used)),
                 )
 
             trace = trace_fn(
@@ -6132,13 +6208,14 @@ class KerrRayTracer:
                 row_start=row_start,
                 row_end=row_end,
             )
+            f = _as_trace_frame(trace)
             return (
-                _shade_from_trace(trace).reshape(rows, w, 3),
-                trace[0],
-                trace[1],
-                trace[2],
-                trace[3],
-                int(trace[-1]),
+                _shade_from_trace(f).reshape(rows, w, 3),
+                f.hit_disk,
+                f.hit_emitter,
+                f.hit_horizon,
+                f.escaped,
+                int(f.steps_used),
             )
 
         row_step_overrides: list[int] | None = None

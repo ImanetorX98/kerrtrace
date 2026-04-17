@@ -3,15 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import replace
 import math
-import tempfile
-import time
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
 from PIL import Image, ImageDraw
 import torch
 
-from .animation import VIDEO_SUFFIXES, _encode_video_ffmpeg
 from .config import RenderConfig
 from .geometry import event_horizon_radius, inverse_metric_components, inverse_metric_derivatives
 from .raytracer import KerrRayTracer, PointEmitter
@@ -431,6 +429,92 @@ class ChargedParticleOrbiter:
 
         return Image.fromarray(arr, mode="RGB")
 
+    def simulate(
+        self,
+        frames: int,
+        dt: float = 0.03,
+        substeps: int = 6,
+    ) -> Iterator["ParticleFrame"]:
+        """Pure physics generator — only RK4, no drawing or I/O."""
+        from .particle_renderer import ParticleFrame
+
+        if self._state is None:
+            self._initial_state()
+        if self._state is None or self._specific_charge is None or self._active is None:
+            raise RuntimeError("Particle state initialization failed")
+
+        state = self._state.clone()
+        qspec = self._specific_charge.clone()
+        active = self._active.clone()
+
+        for frame_idx in range(frames):
+            for _ in range(substeps):
+                idx = torch.nonzero(active, as_tuple=False).squeeze(-1)
+                if not bool(idx.numel()):
+                    break
+                nxt = self._rk4_step(state[idx], qspec[idx], dt)
+                state[idx] = nxt
+                dead = (nxt[:, 1] <= 1.005 * self.horizon) | (nxt[:, 1] >= self.config.escape_radius)
+                if bool(dead.any()):
+                    active[idx[dead]] = False
+
+            yield ParticleFrame(
+                state_bl=state.clone(),
+                charges=qspec,
+                active=active.clone(),
+                frame_index=frame_idx,
+                spin=float(self.config.spin),
+            )
+
+        self._state = state
+        self._active = active
+
+    def _simulate_single(
+        self,
+        radius: float,
+        theta_deg: float,
+        phi_deg: float,
+        specific_charge: float,
+        v_phi: float,
+        v_theta: float,
+        v_r: float,
+        frames: int,
+        dt: float,
+        substeps: int,
+    ) -> Iterator["ParticleFrame"]:
+        """Pure physics generator for a single particle."""
+        from .particle_renderer import ParticleFrame
+
+        state, qspec = self._initial_single_particle_state(
+            radius=radius,
+            theta_deg=theta_deg,
+            phi_deg=phi_deg,
+            specific_charge=specific_charge,
+            v_phi=v_phi,
+            v_theta=v_theta,
+            v_r=v_r,
+        )
+        active = torch.ones((1,), dtype=torch.bool, device=self.device)
+
+        for frame_idx in range(frames):
+            for _ in range(substeps):
+                if not bool(active.any()):
+                    break
+                nxt = self._rk4_step(state, qspec, dt)
+                state = nxt
+                r = state[:, 1]
+                dead = (r <= 1.005 * self.horizon) | (r >= self.config.escape_radius)
+                if bool(dead.any()):
+                    active[dead] = False
+
+            yield ParticleFrame(
+                state_bl=state.clone(),
+                charges=qspec,
+                active=active.clone(),
+                frame_index=frame_idx,
+                spin=float(self.config.spin),
+            )
+
     def render_animation(
         self,
         output_path: str | Path,
@@ -448,114 +532,16 @@ class ChargedParticleOrbiter:
         if substeps <= 0:
             raise ValueError("substeps must be > 0")
 
-        if self._state is None:
-            self._initial_state()
-        if self._state is None or self._specific_charge is None or self._active is None:
-            raise RuntimeError("Particle state initialization failed")
+        from .particle_renderer import ParticleRenderer
 
-        cfg = replace(self.config, width=max(256, self.config.width), height=max(144, self.config.height))
-        w = cfg.width
-        h = cfg.height
-
-        target = Path(output_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-
-        t0 = time.perf_counter()
-        with tempfile.TemporaryDirectory(prefix="kerrtrace_particles_", dir=str(target.parent)) as tmp:
-            frame_dir = Path(tmp)
-            base_bg = self._background_image(w, h)
-            state = self._state.clone()
-            qspec = self._specific_charge.clone()
-            active = self._active.clone()
-            history: list[np.ndarray] = []
-            max_hist = 18
-
-            for frame_idx in range(frames):
-                for _ in range(substeps):
-                    idx = torch.nonzero(active, as_tuple=False).squeeze(-1)
-                    if not bool(idx.numel()):
-                        break
-                    cur = state[idx]
-                    nxt = self._rk4_step(cur, qspec[idx], dt)
-                    state[idx] = nxt
-
-                    r = nxt[:, 1]
-                    dead = (r <= 1.005 * self.horizon) | (r >= self.config.escape_radius)
-                    if bool(dead.any()):
-                        active[idx[dead]] = False
-
-                pts = self._positions_cartesian(state).detach().cpu().numpy()
-                active_np = active.detach().cpu().numpy()
-                charge_np = qspec.detach().cpu().numpy()
-                history.append(pts.copy())
-                if len(history) > max_hist:
-                    history.pop(0)
-
-                phase = 0.0 if frames == 1 else frame_idx / (frames - 1)
-                az = math.radians(35.0 + 120.0 * phase)
-                el = math.radians(38.0 - 76.0 * phase)
-                cam, right, up, forward = self._camera_basis(az, el, camera_radius)
-
-                img = base_bg.copy().convert("RGBA")
-                draw = ImageDraw.Draw(img, "RGBA")
-
-                origin_2d, origin_vis = self._project_points(
-                    np.array([[0.0, 0.0, 0.0]], dtype=np.float64),
-                    cam,
-                    right,
-                    up,
-                    forward,
-                    w,
-                    h,
-                    fov_deg,
-                )
-                if bool(origin_vis[0]):
-                    dist = max(float(np.dot(-cam, forward)), 1.0e-6)
-                    bh_r = 1.8 * self.horizon
-                    pix_r = max(2.0, 0.5 * w * bh_r / (dist * math.tan(math.radians(0.5 * fov_deg))))
-                    cx, cy = float(origin_2d[0, 0]), float(origin_2d[0, 1])
-                    draw.ellipse((cx - 1.6 * pix_r, cy - 1.6 * pix_r, cx + 1.6 * pix_r, cy + 1.6 * pix_r), fill=(20, 20, 24, 90))
-                    draw.ellipse((cx - pix_r, cy - pix_r, cx + pix_r, cy + pix_r), fill=(0, 0, 0, 255))
-                    draw.ellipse((cx - 1.15 * pix_r, cy - 1.15 * pix_r, cx + 1.15 * pix_r, cy + 1.15 * pix_r), outline=(210, 210, 235, 80), width=1)
-
-                for hidx, pts_hist in enumerate(history):
-                    age = hidx + 1
-                    alpha = int(16 + 160 * age / len(history))
-                    proj, vis = self._project_points(pts_hist, cam, right, up, forward, w, h, fov_deg)
-                    for i in range(proj.shape[0]):
-                        if (not vis[i]) or (not active_np[i]):
-                            continue
-                        x2 = float(proj[i, 0])
-                        y2 = float(proj[i, 1])
-                        if x2 < -3.0 or x2 > (w + 3.0) or y2 < -3.0 or y2 > (h + 3.0):
-                            continue
-                        if charge_np[i] >= 0.0:
-                            col = (255, 92, 92, alpha)
-                        else:
-                            col = (92, 170, 255, alpha)
-                        draw.ellipse((x2 - 1.2, y2 - 1.2, x2 + 1.2, y2 + 1.2), fill=col)
-
-                frame_path = frame_dir / f"frame_{frame_idx:05d}.png"
-                img.convert("RGB").save(frame_path)
-                print(f"Particle frame {frame_idx + 1}/{frames}: {frame_path}")
-
-            suffix = target.suffix.lower()
-            if suffix in VIDEO_SUFFIXES:
-                _encode_video_ffmpeg(frame_dir, target, fps, cfg)
-            else:
-                raise ValueError("Unsupported output extension for particle animation. Use .mp4, .mov, or .mkv")
-
-        self._state = state
-        self._active = active
-        survivors = int(active.sum().item())
-        dt_wall = time.perf_counter() - t0
-        return ChargedParticleAnimationStats(
-            frames=frames,
-            fps=fps,
-            elapsed_seconds=dt_wall,
-            output_path=target,
-            particles=self.particle_count,
-            survivors=survivors,
+        renderer = ParticleRenderer(self.config, seed=self.seed)
+        return renderer.render_animation(
+            self.simulate(frames, dt, substeps),
+            output_path,
+            fps,
+            camera_radius,
+            fov_deg,
+            self.horizon,
         )
 
     def render_single_particle_over_raytrace(
@@ -583,126 +569,29 @@ class ChargedParticleOrbiter:
         if trail_length < 1:
             raise ValueError("trail_length must be > 0")
 
+        from .particle_renderer import RaytracedParticleRenderer
+
         cfg = self.config.validated()
         tracer = KerrRayTracer(cfg)
-        cam, right, up, forward = self._camera_basis_from_config(cfg)
-
-        target = Path(output_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-
-        state, qspec = self._initial_single_particle_state(
-            radius=radius,
-            theta_deg=theta_deg,
-            phi_deg=phi_deg,
-            specific_charge=specific_charge,
-            v_phi=v_phi,
-            v_theta=v_theta,
-            v_r=v_r,
-        )
-        active = torch.ones((1,), dtype=torch.bool, device=self.device)
-
-        t0 = time.perf_counter()
-        with tempfile.TemporaryDirectory(prefix="kerrtrace_particle_rt_", dir=str(target.parent)) as tmp:
-            frame_dir = Path(tmp)
-            trail_xyz: list[np.ndarray] = []
-            for frame_idx in range(frames):
-                for _ in range(substeps):
-                    if not bool(active.any()):
-                        break
-                    nxt = self._rk4_step(state, qspec, dt)
-                    state = nxt
-                    r = state[:, 1]
-                    dead = (r <= 1.005 * self.horizon) | (r >= cfg.escape_radius)
-                    if bool(dead.any()):
-                        active[dead] = False
-
-                emitter: PointEmitter | None = None
-                if bool(active[0].item()):
-                    r = state[:, 1]
-                    theta = state[:, 2]
-                    phi = state[:, 3]
-                    p_t = state[:, 4]
-                    p_r = state[:, 5]
-                    p_th = state[:, 6]
-                    p_phi = state[:, 7]
-
-                    inv = self._inv_metric(r, theta)
-                    a_t, a_phi = self._electromagnetic_potential(r, theta)
-                    pi_t = p_t - qspec * a_t
-                    pi_r = p_r
-                    pi_th = p_th
-                    pi_phi = p_phi - qspec * a_phi
-
-                    u_t = (inv.gtt * pi_t + inv.gtphi * pi_phi)[0]
-                    u_r = (inv.grr * pi_r)[0]
-                    u_th = (inv.gthth * pi_th)[0]
-                    u_phi = (inv.gtphi * pi_t + inv.gphiphi * pi_phi)[0]
-
-                    if qspec[0].item() >= 0.0:
-                        color = (1.00, 0.38, 0.34)
-                    else:
-                        color = (0.34, 0.68, 1.00)
-
-                    emitter = PointEmitter(
-                        r=float(r[0].item()),
-                        theta=float(theta[0].item()),
-                        phi=float(phi[0].item()),
-                        u_t=float(u_t.item()),
-                        u_r=float(u_r.item()),
-                        u_theta=float(u_th.item()),
-                        u_phi=float(u_phi.item()),
-                        radius=0.08,
-                        intensity=0.75,
-                        color_rgb=color,
-                    )
-                    pos = self._positions_cartesian(state).detach().cpu().numpy()[0]
-                    trail_xyz.append(pos.copy())
-                    if len(trail_xyz) > trail_length:
-                        trail_xyz.pop(0)
-                elif trail_xyz:
-                    # Keep the recent trail visible for a few frames after capture.
-                    trail_xyz.pop(0)
-
-                # The particle light is ray-traced with the same null geodesics as disk/background.
-                img = tracer.render(emitter=emitter).image.convert("RGBA")
-                if trail_xyz:
-                    pts = np.asarray(trail_xyz, dtype=np.float64)
-                    proj, vis = self._project_points(pts, cam, right, up, forward, cfg.width, cfg.height, cfg.fov_deg)
-                    if qspec[0].item() >= 0.0:
-                        trail_col = (255, 90, 90)
-                    else:
-                        trail_col = (90, 165, 255)
-                    draw = ImageDraw.Draw(img, "RGBA")
-                    ntrail = len(trail_xyz)
-                    for i in range(1, ntrail):
-                        if (not bool(vis[i - 1])) or (not bool(vis[i])):
-                            continue
-                        x0, y0 = float(proj[i - 1, 0]), float(proj[i - 1, 1])
-                        x1, y1 = float(proj[i, 0]), float(proj[i, 1])
-                        age = i / max(ntrail - 1, 1)
-                        alpha = int(24 + 200 * age)
-                        width_px = 1 if age < 0.7 else 2
-                        draw.line((x0, y0, x1, y1), fill=(trail_col[0], trail_col[1], trail_col[2], alpha), width=width_px)
-                    xh, yh = float(proj[-1, 0]), float(proj[-1, 1])
-                    draw.ellipse((xh - 1.8, yh - 1.8, xh + 1.8, yh + 1.8), fill=(trail_col[0], trail_col[1], trail_col[2], 235))
-                img = img.convert("RGB")
-                frame_path = frame_dir / f"frame_{frame_idx:05d}.png"
-                img.save(frame_path)
-                print(f"Raytraced particle frame {frame_idx + 1}/{frames}: {frame_path}")
-
-            suffix = target.suffix.lower()
-            if suffix in VIDEO_SUFFIXES:
-                _encode_video_ffmpeg(frame_dir, target, fps, cfg)
-            else:
-                raise ValueError("Unsupported output extension for raytraced particle animation. Use .mp4, .mov, or .mkv")
-
-        elapsed = time.perf_counter() - t0
-        survivors = int(active.sum().item())
-        return ChargedParticleAnimationStats(
-            frames=frames,
-            fps=fps,
-            elapsed_seconds=elapsed,
-            output_path=target,
-            particles=1,
-            survivors=survivors,
+        renderer = RaytracedParticleRenderer(tracer)
+        return renderer.render_animation(
+            self._simulate_single(
+                radius=radius,
+                theta_deg=theta_deg,
+                phi_deg=phi_deg,
+                specific_charge=specific_charge,
+                v_phi=v_phi,
+                v_theta=v_theta,
+                v_r=v_r,
+                frames=frames,
+                dt=dt,
+                substeps=substeps,
+            ),
+            output_path,
+            fps,
+            trail_length,
+            inv_metric_fn=self._inv_metric,
+            em_potential_fn=self._electromagnetic_potential,
+            horizon=self.horizon,
+            escape_radius=float(self.config.escape_radius),
         )
